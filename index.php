@@ -1,1450 +1,2445 @@
 <?php
 // ============================================================
-// PrintCRM v3.0 — index.php
-// Единственная точка входа фронтенда
+// PrintCRM API v3.0 — api/index.php
+// Единая точка входа. Все эндпоинты. SQLite backend.
+// PHP 8.2 | Apache | Beget shared hosting
 // ============================================================
-$config = [
-    'api_url'     => '/api/',
-    'api_key'     => '12345',
-    'version'     => '3.0',
-    'app_name'    => 'ПРИНТСС медиа Pro',
-    'app_sub'     => 'Фотокопицентр & Типография',
-];
-?>
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title><?= $config['app_name'] ?> — <?= $config['app_sub'] ?></title>
-<link rel="stylesheet" href="styles.css">
-</head>
-<body>
 
-<!-- ─── CONFIG (до всех скриптов) ─────────────────────────── -->
-<script>
-  const API_URL     = '<?= $config['api_url'] ?>';
-  const API_KEY     = '<?= $config['api_key'] ?>';
-  const APP_VERSION = '<?= $config['version'] ?>';
-  const apiHeaders  = {
-    'Content-Type': 'application/json',
-    'X-Api-Key':    API_KEY,
-  };
-</script>
+declare(strict_types=1);
 
-<!-- ─── NOTIFICATION STACK ────────────────────────────────── -->
-<div class="notification-stack" id="notifStack"></div>
+// ── Глобальный обработчик ошибок ────────────────────────────
+set_error_handler(function(int $errno, string $errstr, string $errfile, int $errline): bool {
+    if (!(error_reporting() & $errno)) return false;
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'ok'    => false,
+        'error' => $errstr,
+        'file'  => $errfile,
+        'line'  => $errline,
+    ]);
+    exit();
+});
 
-<!-- ─── HEADER ───────────────────────────────────────────── -->
-<header class="header">
-  <div class="header-logo">
-    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-      <rect width="28" height="28" rx="8" fill="url(#lg1)"/>
-      <defs><linearGradient id="lg1" x1="0" y1="0" x2="28" y2="28">
-        <stop stop-color="#7c3aed"/><stop offset="1" stop-color="#06b6d4"/>
-      </linearGradient></defs>
-      <path d="M6 8h16M6 14h10M6 20h13" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
-      <circle cx="21" cy="19" r="4" fill="#06b6d4" opacity="0.9"/>
-      <path d="M19.5 19h3M21 17.5v3" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>
-    </svg>
-    <?= $config['app_name'] ?>
-  </div>
+set_exception_handler(function(Throwable $e): void {
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'ok'    => false,
+        'error' => $e->getMessage(),
+        'file'  => $e->getFile(),
+        'line'  => $e->getLine(),
+    ]);
+    exit();
+});
 
-  <div class="header-center">
-    <button class="btn-quick btn-income"  onclick="openModal('incomeModal')">
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
-        <polyline points="17 6 23 6 23 12"/>
-      </svg>
-      Внести доход
-    </button>
-    <button class="btn-quick btn-expense" onclick="openModal('expenseModal')">
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-        <polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/>
-        <polyline points="17 18 23 18 23 12"/>
-      </svg>
-      Внести расход
-    </button>
-    <button class="btn-quick btn-order"   onclick="openModal('orderModal')">
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-        <rect x="2" y="3" width="20" height="18" rx="2"/>
-        <line x1="8" y1="10" x2="16" y2="10"/>
-        <line x1="8" y1="14" x2="14" y2="14"/>
-      </svg>
-      Внести заказ
-    </button>
-  </div>
+// ── CORS ────────────────────────────────────────────────────
+header('Content-Type: application/json; charset=utf-8');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Api-Key');
 
-  <div class="header-right">
-    <div id="syncIndicator" style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:var(--text-muted);">
-      <span id="syncDot" class="status-dot"></span>
-      <span id="syncText">Онлайн</span>
-    </div>
-    <div class="time-widget">
-      <div class="time" id="clockTime">--:--</div>
-      <div class="date" id="clockDate">---</div>
-    </div>
-  </div>
-</header>
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
 
-<!-- ─── LAYOUT ───────────────────────────────────────────── -->
-<div class="layout">
+// ── ПУТИ ────────────────────────────────────────────────────
+define('ROOT',        dirname(__DIR__));
+define('DATA_DIR',    ROOT . '/data');
+define('DB_FILE',     DATA_DIR . '/printcrm.sqlite');
+define('UPLOADS_DIR', DATA_DIR . '/uploads');
+define('LOGS_DIR',    DATA_DIR . '/logs');
+define('BACKUP_DIR',  DATA_DIR . '/backups');
+define('MODULES_DIR', __DIR__ . '/modules');
 
-<!-- ─── SIDEBAR ──────────────────────────────────────────── -->
-<aside class="sidebar" id="sidebar">
-  <div class="sidebar-section-label">Навигация</div>
+// ── КОНФИГ ──────────────────────────────────────────────────
+define('API_KEY',     '12345');
+define('APP_VERSION', '3.0');
 
-  <button class="nav-btn active" id="nav-dashboard" onclick="showPage('dashboard',this)">
-    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-      <rect x="3" y="3" width="7" height="7" rx="1"/>
-      <rect x="14" y="3" width="7" height="7" rx="1"/>
-      <rect x="3" y="14" width="7" height="7" rx="1"/>
-      <rect x="14" y="14" width="7" height="7" rx="1"/>
-    </svg>
-    Дашборд + ИИ
-  </button>
+// ── АВТОЗАГРУЗКА ────────────────────────────────────────────
+require_once __DIR__ . '/core/CQLite.php';
+require_once __DIR__ . '/core/Request.php';
+require_once __DIR__ . '/core/Response.php';
+require_once __DIR__ . '/core/Auth.php';
+require_once __DIR__ . '/core/Logger.php';
+require_once __DIR__ . '/core/Validator.php';
 
-  <button class="nav-btn" id="nav-orders" onclick="showPage('orders',this)">
-    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-      <rect x="2" y="3" width="20" height="18" rx="2"/>
-      <polyline points="8 10 12 14 16 10"/>
-    </svg>
-    Заказы
-    <span class="nav-badge" id="ordersNavBadge" style="display:none">0</span>
-  </button>
+// ── ИНИЦИАЛИЗАЦИЯ ───────────────────────────────────────────
+$db  = CQLite::getInstance(DB_FILE);
+$req = new Request();
+$res = new Response();
+$log = new Logger($db);
 
-  <button class="nav-btn" id="nav-finance" onclick="showPage('finance',this)">
-    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-      <line x1="12" y1="1" x2="12" y2="23"/>
-      <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-    </svg>
-    Доходы / Расходы
-  </button>
+// ── АВТОРИЗАЦИЯ ─────────────────────────────────────────────
+$endpoint = $req->getEndpoint();
 
-  <button class="nav-btn" id="nav-stats" onclick="showPage('stats',this)">
-    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-    </svg>
-    Статистика
-  </button>
+$public = ['ping', 'webhooks'];
+if (!in_array($endpoint, $public)) {
+    Auth::check($req) or $res->unauthorized();
+}
 
-  <button class="nav-btn" id="nav-accounting" onclick="showPage('accounting',this)">
-    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-      <polyline points="14 2 14 8 20 8"/>
-    </svg>
-    Финансовый учёт
-  </button>
+// ── РОУТЕР ──────────────────────────────────────────────────
+$method = $req->method();
+$path   = $req->path();
+$body   = $req->body();
+$params = $req->params();
 
-  <button class="nav-btn" id="nav-clients" onclick="showPage('clients',this)">
-    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-      <circle cx="9" cy="7" r="4"/>
-      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-      <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-    </svg>
-    База клиентов
-  </button>
+if ($endpoint !== 'ping') {
+    $log->api($method, implode('/', $path), $req->ip());
+}
 
-  <button class="nav-btn" id="nav-notes" onclick="showPage('notes',this)">
-    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-      <path d="M12 20h9"/>
-      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
-    </svg>
-    Заметки смены
-    <span class="nav-badge" id="notesNavBadge" style="background:var(--accent4);display:none">!</span>
-  </button>
+try {
+    route($path, $method, $body, $params, $db, $req, $res, $log);
+} catch (Throwable $e) {
+    $log->error('ROUTER', $e->getMessage(), $e->getTraceAsString());
+    $res->serverError($e->getMessage());
+}
 
-  <div class="sidebar-section-label">Система</div>
+// ════════════════════════════════════════════════════════════
+// ГЛАВНЫЙ РОУТЕР
+// ════════════════════════════════════════════════════════════
+function route(
+    array $path, string $method, array $body,
+    array $params, CQLite $db, Request $req,
+    Response $res, Logger $log
+): void {
+    $seg0 = $path[0] ?? '';
+    $seg1 = $path[1] ?? '';
+    $id   = $params['id'] ?? $body['id'] ?? null;
 
-  <button class="nav-btn" id="nav-warehouse" onclick="showPage('warehouse',this)">
-    <span style="font-size:1rem;">📦</span> Склад
-    <span class="nav-badge" id="warehouseLowBadge" style="background:var(--danger);display:none">!</span>
-  </button>
+    match ($seg0) {
 
-  <button class="nav-btn" id="nav-calendar" onclick="showPage('calendar',this)">
-    <span style="font-size:1rem;">📅</span> Календарь
-  </button>
+        'ping' => $res->ok([
+            'status'  => 'ok',
+            'version' => APP_VERSION,
+            'php'     => PHP_VERSION,
+            'time'    => date('Y-m-d H:i:s'),
+            'db'      => $db->ping() ? 'ok' : 'error',
+        ]),
 
-  <button class="nav-btn" id="nav-settings" onclick="showPage('settings',this)">
-    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="3"/>
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06
-               a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09
-               A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83
-               l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09
-               A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83
-               l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09
-               a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83
-               l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09
-               a1.65 1.65 0 0 0-1.51 1z"/>
-    </svg>
-    Настройки
-  </button>
+        'db' => match ($seg1) {
+            'info'  => handleDbInfo($db, $res),
+            'clear' => handleDbClear($db, $res, $log),
+            default => $res->notFound('db/' . $seg1),
+        },
 
-  <!-- Доп. модули — заполняется JS -->
-  <div id="modules-sidebar-section"></div>
+        'import' => handleImport($body, $db, $res, $log),
 
-  <div class="sidebar-footer">
-    <div style="font-size:0.68rem;color:var(--text-muted);padding:8px 10px;line-height:1.6;">
-      <div style="font-weight:700;color:var(--text);"><?= $config['app_name'] ?></div>
-      <div>v<?= $config['version'] ?> • SQLite</div>
-      <div id="dbSizeInfo" style="color:var(--accent2);">---</div>
-    </div>
-  </div>
-</aside>
+        'orders' => match ($seg1) {
+            ''      => handleOrders($method, $body, $params, $id, $db, $res, $log),
+            default => $res->notFound('orders/' . $seg1),
+        },
 
-<!-- ─── MAIN ──────────────────────────────────────────────── -->
-<main class="main" id="mainContent">
+        'finance' => match ($seg1) {
+            ''        => handleFinance($method, $body, $params, $id, $db, $res, $log),
+            'summary' => handleFinanceSummary($params, $db, $res),
+            default   => $res->notFound('finance/' . $seg1),
+        },
 
-<!-- ══════════════════════════════════════════════════════════
-     PAGE: DASHBOARD
-══════════════════════════════════════════════════════════ -->
-<div class="page active" id="page-dashboard">
-  <div class="page-header">
-    <div>
-      <div class="page-title">Дашборд</div>
-      <div class="page-subtitle">Обзор бизнеса и ИИ-ассистент Валера</div>
-    </div>
-    <button class="btn btn-secondary btn-sm" onclick="refreshDashboard()">
-      <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-        <polyline points="23 4 23 10 17 10"/>
-        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-      </svg>
-      Обновить
-    </button>
-  </div>
+        'clients' => match ($seg1) {
+            ''      => handleClients($method, $body, $params, $id, $db, $res, $log),
+            default => $res->notFound('clients/' . $seg1),
+        },
 
-  <!-- KPI -->
-  <div class="grid-4 mb-16">
-    <div class="stat-card purple">
-      <div class="stat-icon">📋</div>
-      <div class="stat-label">Заказы сегодня</div>
-      <div class="stat-value purple" id="kpiOrdersToday">—</div>
-      <div class="stat-sub">за сутки</div>
-    </div>
-    <div class="stat-card green">
-      <div class="stat-icon">💰</div>
-      <div class="stat-label">Доходы (месяц)</div>
-      <div class="stat-value green" id="kpiIncomeMonth">—</div>
-      <div class="stat-sub" id="kpiIncomeToday">сегодня: —</div>
-    </div>
-    <div class="stat-card red">
-      <div class="stat-icon">📤</div>
-      <div class="stat-label">Расходы (месяц)</div>
-      <div class="stat-value red" id="kpiExpenseMonth">—</div>
-      <div class="stat-sub" id="kpiExpenseToday">сегодня: —</div>
-    </div>
-    <div class="stat-card cyan">
-      <div class="stat-icon">📈</div>
-      <div class="stat-label">Прибыль (месяц)</div>
-      <div class="stat-value cyan" id="kpiProfitMonth">—</div>
-      <div class="stat-sub" id="kpiProfitStatus">расчёт...</div>
-    </div>
-  </div>
+        'warehouse' => match ($seg1) {
+            ''        => handleWarehouse($method, $body, $params, $id, $db, $res, $log),
+            'restock' => handleWarehouseAction('restock', $body, $db, $res, $log),
+            'deduct'  => handleWarehouseAction('deduct', $body, $db, $res, $log),
+            'history' => handleWarehouseHistory($db, $res),
+            default   => $res->notFound('warehouse/' . $seg1),
+        },
 
-  <!-- ЗАКАЗЫ + ФИНАНСЫ -->
-  <div class="grid-2" style="gap:20px;">
-    <div class="card">
-      <div class="card-title">
-        <svg width="14" height="14" fill="none" stroke="var(--accent)" stroke-width="2" viewBox="0 0 24 24">
-          <rect x="2" y="3" width="20" height="18" rx="2"/>
-          <polyline points="8 10 12 14 16 10"/>
-        </svg>
-        Последние заказы
-      </div>
-      <div id="dashRecentOrders">
-        <div class="empty-state">
-          <div class="icon">📋</div>
-          <div class="title">Загрузка...</div>
-        </div>
-      </div>
-    </div>
+        'notes' => match ($seg1) {
+            ''      => handleNotes($method, $body, $params, $id, $db, $res, $log),
+            default => $res->notFound('notes/' . $seg1),
+        },
 
-    <div class="card" style="padding:0;overflow:hidden;">
-      <div style="padding:14px 16px 0;display:flex;align-items:center;justify-content:space-between;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#065f46,#10b981);display:flex;align-items:center;justify-content:center;font-size:1rem;">💵</div>
-          <div>
-            <div style="font-weight:700;font-size:0.85rem;">Финансы сегодня</div>
-            <div style="font-size:0.7rem;color:var(--text-muted);" id="dashTodayDate">—</div>
-          </div>
-        </div>
-        <div style="display:flex;gap:6px;">
-          <button class="btn btn-success btn-xs" onclick="openModal('incomeModal')">+ Доход</button>
-          <button class="btn btn-danger btn-xs"  onclick="openModal('expenseModal')">− Расход</button>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;padding:14px 16px;border-bottom:1px solid var(--border);">
-        <div style="text-align:center;padding:8px;border-right:1px solid var(--border);">
-          <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:4px;">Доходы</div>
-          <div style="font-size:1.3rem;font-weight:800;color:var(--accent3);" id="dashTodayIncome">—</div>
-        </div>
-        <div style="text-align:center;padding:8px;border-right:1px solid var(--border);">
-          <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:4px;">Расходы</div>
-          <div style="font-size:1.3rem;font-weight:800;color:var(--danger);" id="dashTodayExpense">—</div>
-        </div>
-        <div style="text-align:center;padding:8px;">
-          <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:4px;">Прибыль</div>
-          <div style="font-size:1.3rem;font-weight:800;color:var(--accent2);" id="dashTodayProfit">—</div>
-        </div>
-      </div>
-      <div style="padding:10px 16px 6px;">
-        <div style="display:flex;justify-content:space-between;font-size:0.68rem;color:var(--text-muted);margin-bottom:4px;">
-          <span>Соотношение доход/расход</span>
-          <span id="dashTodayRatio">—</span>
-        </div>
-        <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
-          <div id="dashTodayBar" style="height:100%;border-radius:3px;background:linear-gradient(to right,var(--accent3),var(--accent2));transition:width 0.6s ease;width:0%;"></div>
-        </div>
-      </div>
-      <div style="padding:8px 16px 14px;">
-        <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Последние операции</div>
-        <div id="dashRecentFinance" style="display:flex;flex-direction:column;gap:5px;">
-          <div style="text-align:center;padding:12px;color:var(--text-muted);font-size:0.78rem;">Загрузка...</div>
-        </div>
-      </div>
-    </div>
-  </div>
+        'calendar' => match ($seg1) {
+            ''      => handleCalendar($method, $body, $params, $id, $db, $res, $log),
+            default => $res->notFound('calendar/' . $seg1),
+        },
 
-  <!-- СТАТИСТИКА -->
-  <div class="mt-24">
-    <div class="section-label">📊 Статистика за сегодня</div>
-    <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:16px;">
-      <div class="card" style="padding:16px;">
-        <div class="card-title">
-          <svg width="13" height="13" fill="none" stroke="var(--accent3)" stroke-width="2" viewBox="0 0 24 24">
-            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-          </svg>
-          Доходы по часам (сегодня)
-        </div>
-        <div id="dashHourlyChart" style="display:flex;align-items:flex-end;gap:3px;height:72px;padding-top:4px;">
-          <div style="color:var(--text-muted);font-size:0.72rem;align-self:center;width:100%;text-align:center;">Загрузка...</div>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:0.6rem;color:var(--text-muted);">
-          <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span>
-        </div>
-      </div>
-      <div class="card" style="padding:16px;">
-        <div class="card-title">
-          <svg width="13" height="13" fill="none" stroke="var(--accent4)" stroke-width="2" viewBox="0 0 24 24">
-            <path d="M18 20V10M12 20V4M6 20v-6"/>
-          </svg>
-          Топ доходов сегодня
-        </div>
-        <div id="dashTopIncome" style="display:flex;flex-direction:column;gap:7px;margin-top:4px;">
-          <div style="color:var(--text-muted);font-size:0.72rem;text-align:center;padding:16px 0;">Загрузка...</div>
-        </div>
-      </div>
-      <div class="card" style="padding:16px;display:flex;flex-direction:column;gap:10px;">
-        <div class="card-title">
-          <svg width="13" height="13" fill="none" stroke="var(--accent2)" stroke-width="2" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M12 6v6l4 2"/>
-          </svg>
-          Итог дня
-        </div>
-        <div style="text-align:center;">
-          <div id="dashDayEmoji" style="font-size:2.8rem;line-height:1;">😐</div>
-          <div id="dashDayLabel" style="font-size:0.75rem;font-weight:700;color:var(--text-muted);margin-top:4px;">—</div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:6px;">
-          <div style="display:flex;justify-content:space-between;font-size:0.75rem;padding:5px 8px;background:var(--bg-dark);border-radius:6px;">
-            <span style="color:var(--text-muted);">Операций</span>
-            <span style="font-weight:700;color:var(--text);" id="dashTodayOpsCount">—</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;font-size:0.75rem;padding:5px 8px;background:var(--bg-dark);border-radius:6px;">
-            <span style="color:var(--text-muted);">Заказов</span>
-            <span style="font-weight:700;color:var(--accent2);" id="dashTodayOrdersCount">—</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;font-size:0.75rem;padding:5px 8px;background:var(--bg-dark);border-radius:6px;">
-            <span style="color:var(--text-muted);">Ср. чек</span>
-            <span style="font-weight:700;color:var(--accent4);" id="dashTodayAvgCheck">—</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+        'settings' => handleSettings($method, $body, $db, $res, $log),
+        'stats'    => handleStats($params, $db, $res),
 
-  <!-- ИИ ВАЛЕРА -->
-  <div class="mt-24">
-    <div class="section-label">ИИ-ассистент Валера (DeepSeek)</div>
-    <div class="card" style="padding:0;overflow:hidden;">
-      <div style="display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--bg-card2);">
-        <div style="width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:1.3rem;animation:float 3s ease-in-out infinite;">🤖</div>
-        <div>
-          <div style="font-weight:700;">Валера — Ваш эксперт по типографии</div>
-          <div style="font-size:0.72rem;color:var(--text-muted);">Знает всё о печати, экономике, ценообразовании, форматах</div>
-        </div>
-        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
-          <span class="status-dot"></span>
-          <span style="font-size:0.75rem;color:var(--accent3);">DeepSeek AI</span>
-        </div>
-      </div>
-      <div style="padding:12px 16px;background:var(--bg-dark);border-bottom:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;">
-        <span style="font-size:0.72rem;color:var(--text-muted);align-self:center;">Быстрые вопросы:</span>
-        <button class="ai-quick-btn" onclick="sendQuickChat('Какие форматы баннеров самые популярные?')">📐 Форматы баннеров</button>
-        <button class="ai-quick-btn" onclick="sendQuickChat('Как рассчитать себестоимость печати?')">💰 Расчёт цены</button>
-        <button class="ai-quick-btn" onclick="sendQuickChat('Дай анализ финансов моей типографии за текущий месяц')">📊 Анализ финансов</button>
-        <button class="ai-quick-btn" onclick="sendQuickChat('Какие услуги добавить чтобы увеличить прибыль?')">🚀 Рост бизнеса</button>
-        <button class="ai-quick-btn" onclick="sendQuickChat('Стандартные форматы фотопечати')">🖼️ Фото форматы</button>
-        <button class="ai-quick-btn" onclick="sendQuickChat('Расскажи анекдот про типографию')">😄 Развлечь меня</button>
-      </div>
-      <div class="chat-messages" id="chatMessages" style="height:380px;border:none;border-radius:0;"></div>
-      <div class="chat-input-area">
-        <textarea class="chat-input" id="chatInput"
-          placeholder="Спросите Валера... (Enter — отправить, Shift+Enter — новая строка)"
-          rows="1"
-          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage();}"
-          oninput="autoResizeTextarea(this)"></textarea>
-        <button class="chat-send-btn" onclick="sendChatMessage()">
-          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-            <line x1="22" y1="2" x2="11" y2="13"/>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-          </svg>
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
+        'staff' => match ($seg1) {
+            ''       => handleStaff($method, $body, $params, $id, $db, $res, $log),
+            'verify' => handleStaffVerify($body, $db, $res),
+            'log'    => handleStaffLog($db, $res),
+            default  => $res->notFound('staff/' . $seg1),
+        },
 
-<!-- ══════════════════════════════════════════════════════════
-     PAGE: ORDERS (KANBAN)
-══════════════════════════════════════════════════════════ -->
-<div class="page" id="page-orders">
-  <div class="page-header">
-    <div>
-      <div class="page-title">Заказы</div>
-      <div class="page-subtitle">Канбан-доска · перетаскивай карточки между колонками</div>
-    </div>
-    <div style="display:flex;gap:8px;align-items:center;">
-      <div class="search-bar" style="min-width:220px;">
-        <svg width="14" height="14" fill="none" stroke="var(--text-muted)" stroke-width="2" viewBox="0 0 24 24">
-          <circle cx="11" cy="11" r="8"/>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
-        <input type="text" placeholder="Поиск заказа..." id="orderSearch" oninput="renderKanban()">
-      </div>
-      <select class="form-select" style="width:150px;" id="orderServiceFilter" onchange="renderKanban()">
-        <option value="">Все услуги</option>
-        <option value="photo">📸 Фото</option>
-        <option value="copy">🖨️ Копи</option>
-        <option value="banner">🏳️ Баннер</option>
-        <option value="design">🎨 Дизайн</option>
-        <option value="business">💼 Бизнес</option>
-        <option value="wide">🖼️ Широкий</option>
-        <option value="promo">🎁 Сувенирка</option>
-        <option value="other">⚙️ Прочее</option>
-      </select>
-      <button class="btn btn-primary btn-sm" onclick="openModal('orderModal')">+ Новый заказ</button>
-    </div>
-  </div>
+        'salary' => match ($seg1) {
+            ''          => handleSalary($method, $body, $params, $id, $db, $res, $log),
+            'employees' => handleSalaryEmployees($method, $body, $params, $id, $db, $res),
+            'shifts'    => handleSalaryShifts($method, $body, $params, $id, $db, $res),
+            default     => $res->notFound('salary/' . $seg1),
+        },
 
-  <div class="kanban-stats-bar">
-    <div class="kanban-stat-pill"><span class="kanban-stat-dot" style="background:#6366f1;"></span><span id="kbCount_new">0</span>&nbsp;Новых</div>
-    <div class="kanban-stat-pill"><span class="kanban-stat-dot" style="background:#f59e0b;"></span><span id="kbCount_work">0</span>&nbsp;В работе</div>
-    <div class="kanban-stat-pill"><span class="kanban-stat-dot" style="background:#10b981;"></span><span id="kbCount_ready">0</span>&nbsp;Готовы</div>
-    <div class="kanban-stat-pill"><span class="kanban-stat-dot" style="background:#06b6d4;"></span><span id="kbCount_done">0</span>&nbsp;Выданы</div>
-    <div class="kanban-stat-pill"><span class="kanban-stat-dot" style="background:#ef4444;"></span><span id="kbCount_cancel">0</span>&nbsp;Отменены</div>
-    <div class="kanban-stat-pill" style="margin-left:auto;font-weight:800;">💰 <span id="kbTotalSum">0 ₽</span></div>
-  </div>
+        'shifts' => match ($seg1) {
+            ''      => handleShifts($method, $body, $params, $id, $db, $res, $log),
+            'open'  => handleShiftOpen($body, $db, $res, $log),
+            'close' => handleShiftClose($body, $db, $res, $log),
+            default => $res->notFound('shifts/' . $seg1),
+        },
 
-  <div class="kanban-board" id="kanbanBoard">
-    <?php
-    $cols = [
-      'new'    => ['🆕','Новые',   'new'],
-      'work'   => ['⚙️','В работе','work'],
-      'ready'  => ['✅','Готовы',  'ready'],
-      'done'   => ['📦','Выданы',  'done'],
-      'cancel' => ['❌','Отменены','cancel'],
+        'debts' => match ($seg1) {
+            ''      => handleDebts($method, $body, $params, $id, $db, $res, $log),
+            'pay'   => handleDebtPay($body, $db, $res, $log),
+            default => $res->notFound('debts/' . $seg1),
+        },
+
+        'upload'   => handleUpload($db, $res, $log),
+        'module'   => handleModule($method, $body, $params, $db, $res, $log),
+        'registry' => handleRegistry($res),
+        'notify'   => handleNotify($body, $db, $res, $log),
+
+        'integrations' => match ($seg1) {
+            ''      => handleIntegrations($method, $body, $params, $id, $db, $res, $log),
+            'test'  => handleIntegrationTest($body, $db, $res, $log),
+            default => $res->notFound('integrations/' . $seg1),
+        },
+
+        'webhooks' => handleWebhook($path, $method, $body, $db, $res, $log),
+
+        'docs' => match ($seg1) {
+            'parse' => handleDocParse($res),
+            default => $res->notFound('docs/' . $seg1),
+        },
+
+        'pos' => match ($seg1) {
+            'payment'  => handlePosPayment($body, $db, $res, $log),
+            'status'   => handlePosStatus($params, $db, $res),
+            'callback' => handlePosCallback($body, $db, $res, $log),
+            default    => $res->notFound('pos/' . $seg1),
+        },
+
+        'briefs' => match ($seg1) {
+            ''      => handleBriefs($method, $body, $params, $id, $db, $res, $log),
+            default => $res->notFound('briefs/' . $seg1),
+        },
+
+        'checklists' => match ($seg1) {
+            ''          => handleChecklists($method, $body, $params, $id, $db, $res),
+            'templates' => handleChecklistTemplates($method, $body, $params, $id, $db, $res),
+            default     => $res->notFound('checklists/' . $seg1),
+        },
+
+        'pricelist' => match ($seg1) {
+            ''      => handlePricelist($method, $body, $params, $id, $db, $res),
+            default => $res->notFound('pricelist/' . $seg1),
+        },
+
+        'templates' => match ($seg1) {
+            ''      => handleTemplates($method, $body, $params, $id, $db, $res),
+            default => $res->notFound('templates/' . $seg1),
+        },
+
+        'schedule' => match ($seg1) {
+            ''      => handleSchedule($method, $body, $params, $id, $db, $res),
+            default => $res->notFound('schedule/' . $seg1),
+        },
+
+        'layouts' => match ($seg1) {
+            ''      => handleLayouts($method, $body, $params, $id, $db, $res),
+            default => $res->notFound('layouts/' . $seg1),
+        },
+
+        'timer' => match ($seg1) {
+            ''      => handleTimer($method, $body, $params, $db, $res),
+            'start' => handleTimerStart($body, $db, $res),
+            'stop'  => handleTimerStop($body, $db, $res),
+            default => $res->notFound('timer/' . $seg1),
+        },
+
+        'queue' => match ($seg1) {
+            ''     => handleQueue($method, $body, $params, $id, $db, $res),
+            'next' => handleQueueNext($db, $res),
+            default => $res->notFound('queue/' . $seg1),
+        },
+
+        'weborders' => match ($seg1) {
+            ''       => handleWebOrders($method, $body, $params, $id, $db, $res, $log),
+            'accept' => handleWebOrderAccept($body, $db, $res, $log),
+            'reject' => handleWebOrderReject($body, $db, $res, $log),
+            default  => $res->notFound('weborders/' . $seg1),
+        },
+
+        'savings' => match ($seg1) {
+            ''      => handleSavings($method, $body, $params, $id, $db, $res),
+            default => $res->notFound('savings/' . $seg1),
+        },
+
+        'delivery' => match ($seg1) {
+            ''      => handleDelivery($method, $body, $params, $id, $db, $res, $log),
+            default => $res->notFound('delivery/' . $seg1),
+        },
+
+        'sizeguide' => match ($seg1) {
+            ''      => handleSizeguide($method, $body, $params, $db, $res),
+            default => $res->notFound('sizeguide/' . $seg1),
+        },
+
+        'stamps' => match ($seg1) {
+            ''      => handleStamps($method, $body, $params, $id, $db, $res),
+            default => $res->notFound('stamps/' . $seg1),
+        },
+
+        'analytics' => match ($seg1) {
+            ''       => handleAnalytics($params, $db, $res),
+            'export' => handleAnalyticsExport($params, $db, $res),
+            default  => $res->notFound('analytics/' . $seg1),
+        },
+
+        'log'     => handleLog($params, $db, $res),
+
+        default   => $res->notFound($seg0),
+    };
+}
+
+// ════════════════════════════════════════════════════════════
+// HELPERS — создание таблиц если не существуют
+// ════════════════════════════════════════════════════════════
+function ensureTable(CQLite $db, string $table, string $ddl): void
+{
+    try {
+        $db->execute($ddl);
+    } catch (Throwable) {
+        // таблица уже существует — игнорируем
+    }
+}
+
+function ensureExtraTables(CQLite $db): void
+{
+    // Таймеры
+    ensureTable($db, 'timers',
+        'CREATE TABLE IF NOT EXISTS timers (
+            id TEXT PRIMARY KEY,
+            name TEXT DEFAULT "",
+            order_id TEXT,
+            started_at TEXT,
+            stopped_at TEXT,
+            duration_sec INTEGER DEFAULT 0,
+            status TEXT DEFAULT "running",
+            created_at TEXT DEFAULT (datetime("now","localtime"))
+        )'
+    );
+    // Размерная сетка
+    ensureTable($db, 'sizeguide',
+        'CREATE TABLE IF NOT EXISTS sizeguide (
+            id TEXT PRIMARY KEY,
+            service TEXT DEFAULT "",
+            name TEXT DEFAULT "",
+            width REAL DEFAULT 0,
+            height REAL DEFAULT 0,
+            unit TEXT DEFAULT "мм",
+            notes TEXT DEFAULT "",
+            created_at TEXT DEFAULT (datetime("now","localtime"))
+        )'
+    );
+    // Штампы
+    ensureTable($db, 'stamps',
+        'CREATE TABLE IF NOT EXISTS stamps (
+            id TEXT PRIMARY KEY,
+            name TEXT DEFAULT "",
+            type TEXT DEFAULT "",
+            order_id TEXT,
+            file_url TEXT DEFAULT "",
+            parameters TEXT DEFAULT "{}",
+            created_at TEXT DEFAULT (datetime("now","localtime"))
+        )'
+    );
+    // Макеты
+    ensureTable($db, 'layouts',
+        'CREATE TABLE IF NOT EXISTS layouts (
+            id TEXT PRIMARY KEY,
+            name TEXT DEFAULT "",
+            order_id TEXT,
+            file_url TEXT DEFAULT "",
+            status TEXT DEFAULT "pending",
+            comment TEXT DEFAULT "",
+            created_at TEXT DEFAULT (datetime("now","localtime"))
+        )'
+    );
+    // Очередь
+    ensureTable($db, 'queue',
+        'CREATE TABLE IF NOT EXISTS queue (
+            id TEXT PRIMARY KEY,
+            client TEXT DEFAULT "",
+            phone TEXT DEFAULT "",
+            service TEXT DEFAULT "",
+            status TEXT DEFAULT "waiting",
+            position INTEGER DEFAULT 0,
+            comment TEXT DEFAULT "",
+            created_at TEXT DEFAULT (datetime("now","localtime"))
+        )'
+    );
+    // Накопления
+    ensureTable($db, 'savings',
+        'CREATE TABLE IF NOT EXISTS savings (
+            id TEXT PRIMARY KEY,
+            name TEXT DEFAULT "",
+            amount REAL DEFAULT 0,
+            goal REAL DEFAULT 0,
+            description TEXT DEFAULT "",
+            created_at TEXT DEFAULT (datetime("now","localtime"))
+        )'
+    );
+    // Доставка
+    ensureTable($db, 'delivery',
+        'CREATE TABLE IF NOT EXISTS delivery (
+            id TEXT PRIMARY KEY,
+            order_id TEXT,
+            client TEXT DEFAULT "",
+            phone TEXT DEFAULT "",
+            address TEXT DEFAULT "",
+            status TEXT DEFAULT "pending",
+            courier TEXT DEFAULT "",
+            scheduled_at TEXT,
+            notes TEXT DEFAULT "",
+            created_at TEXT DEFAULT (datetime("now","localtime"))
+        )'
+    );
+    // Брифы
+    ensureTable($db, 'briefs',
+        'CREATE TABLE IF NOT EXISTS briefs (
+            id TEXT PRIMARY KEY,
+            client TEXT DEFAULT "",
+            staff TEXT DEFAULT "",
+            service TEXT DEFAULT "",
+            content TEXT DEFAULT "",
+            status TEXT DEFAULT "draft",
+            created_at TEXT DEFAULT (datetime("now","localtime"))
+        )'
+    );
+    // Прайс-лист
+    ensureTable($db, 'pricelist',
+        'CREATE TABLE IF NOT EXISTS pricelist (
+            id TEXT PRIMARY KEY,
+            service TEXT DEFAULT "",
+            name TEXT DEFAULT "",
+            unit TEXT DEFAULT "",
+            price_from REAL DEFAULT 0,
+            price_to REAL DEFAULT 0,
+            description TEXT DEFAULT "",
+            created_at TEXT DEFAULT (datetime("now","localtime"))
+        )'
+    );
+    // Шаблоны документов
+    ensureTable($db, 'doc_templates',
+        'CREATE TABLE IF NOT EXISTS doc_templates (
+            id TEXT PRIMARY KEY,
+            name TEXT DEFAULT "",
+            type TEXT DEFAULT "",
+            content TEXT DEFAULT "",
+            variables TEXT DEFAULT "[]",
+            created_at TEXT DEFAULT (datetime("now","localtime"))
+        )'
+    );
+    // Расписание
+    ensureTable($db, 'schedule',
+        'CREATE TABLE IF NOT EXISTS schedule (
+            id TEXT PRIMARY KEY,
+            staff_id TEXT,
+            staff_name TEXT DEFAULT "",
+            date TEXT DEFAULT "",
+            shift_start TEXT DEFAULT "",
+            shift_end TEXT DEFAULT "",
+            notes TEXT DEFAULT "",
+            created_at TEXT DEFAULT (datetime("now","localtime"))
+        )'
+    );
+    // Чек-листы
+    ensureTable($db, 'checklists',
+        'CREATE TABLE IF NOT EXISTS checklists (
+            id TEXT PRIMARY KEY,
+            name TEXT DEFAULT "",
+            items TEXT DEFAULT "[]",
+            order_id TEXT,
+            completed INTEGER DEFAULT 0,
+            staff TEXT DEFAULT "",
+            created_at TEXT DEFAULT (datetime("now","localtime"))
+        )'
+    );
+}
+
+// Создаём отсутствующие таблицы при старте
+ensureExtraTables($db);
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — ЗАКАЗЫ
+// ════════════════════════════════════════════════════════════
+function handleOrders(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res, Logger $log
+): void {
+    switch ($method) {
+
+        case 'GET':
+            $where   = [];
+            $options = ['order' => 'created_at DESC'];
+
+            if (!empty($params['status'])) $where['status'] = $params['status'];
+            if (!empty($params['client'])) $where['client'] = $params['client'];
+
+            if (!empty($params['search'])) {
+                $s    = '%' . $params['search'] . '%';
+                $rows = $db->query(
+                    'SELECT * FROM orders WHERE (client LIKE ? OR num LIKE ? OR comment LIKE ?) ORDER BY created_at DESC LIMIT 500',
+                    [$s, $s, $s]
+                );
+                $res->ok(['data' => array_map('decodeOrderRow', $rows), 'total' => count($rows)]);
+                return;
+            }
+
+            if (!empty($params['date'])) $where['created_at LIKE'] = $params['date'] . '%';
+
+            $page    = max(1, (int)($params['page']    ?? 1));
+            $perPage = min(200, (int)($params['per_page'] ?? 100));
+
+            $result           = $db->paginate('orders', $where, $page, $perPage, $options);
+            $result['data']   = array_map('decodeOrderRow', $result['data']);
+            $res->ok($result);
+            break;
+
+        case 'POST':
+            if (empty($body)) { $res->badRequest('Нет данных'); return; }
+
+            $v = new Validator($body);
+            $v->required('client');
+            if ($v->fails()) { $res->badRequest($v->errors()); return; }
+
+            $row = [
+                'id'            => CQLite::uid('ord'),
+                'num'           => $body['num']           ?? autoOrderNum($db),
+                'client'        => trim($body['client']   ?? ''),
+                'phone'         => $body['phone']         ?? '',
+                'manager'       => $body['manager']       ?? '',
+                'service'       => $body['service']       ?? 'other',
+                'service_label' => $body['service_label'] ?? '',
+                'size'          => $body['size']          ?? '',
+                'status'        => $body['status']        ?? 'new',
+                'payment'       => $body['payment']       ?? 'Наличные',
+                'total'         => (float)($body['total']  ?? 0),
+                'prepay'        => (float)($body['prepay'] ?? 0),
+                'bizcat'        => $body['bizcat']        ?? '',
+                'deadline'      => $body['deadline']      ?? null,
+                'comment'       => $body['comment']       ?? '',
+                'files'         => isset($body['files'])   && is_array($body['files'])   ? json_encode($body['files'],   JSON_UNESCAPED_UNICODE) : ($body['files']   ?? '[]'),
+                'options'       => isset($body['options']) && is_array($body['options']) ? json_encode($body['options'], JSON_UNESCAPED_UNICODE) : ($body['options'] ?? '[]'),
+                'extra'         => isset($body['extra'])   && is_array($body['extra'])   ? json_encode($body['extra'],   JSON_UNESCAPED_UNICODE) : ($body['extra']   ?? '{}'),
+                'created_at'    => $body['date'] ?? date('Y-m-d H:i:s'),
+            ];
+
+            $db->insert('orders', $row);
+            $log->action('ORDER_CREATE', $row['num'] . ' — ' . $row['client']);
+            autoCreateClient($row['client'], $row['phone'], $db);
+
+            $res->ok(['data' => decodeOrderRow($row), 'id' => $row['id']]);
+            break;
+
+        case 'PUT':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $existing = $db->selectOne('orders', ['id' => $id]);
+            if (!$existing) { $res->notFound('Заказ ' . $id); return; }
+
+            $allowed = [
+                'client','phone','manager','service','service_label',
+                'size','status','payment','total','prepay','bizcat',
+                'deadline','comment','files','options','extra',
+            ];
+            $update = [];
+            foreach ($allowed as $field) {
+                if (array_key_exists($field, $body)) {
+                    $val = $body[$field];
+                    if (in_array($field, ['files','options','extra']) && is_array($val)) {
+                        $val = json_encode($val, JSON_UNESCAPED_UNICODE);
+                    }
+                    $update[$field] = $val;
+                }
+            }
+            if (!empty($update)) {
+                $db->update('orders', $update, ['id' => $id]);
+                $log->action('ORDER_UPDATE', 'ID: ' . $id . ' status: ' . ($update['status'] ?? '-'));
+            }
+            $res->ok(['data' => decodeOrderRow($db->selectOne('orders', ['id' => $id]))]);
+            break;
+
+        case 'DELETE':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->delete('orders', ['id' => $id]);
+            $log->action('ORDER_DELETE', 'ID: ' . $id);
+            $res->ok(['deleted' => $id]);
+            break;
+
+        default:
+            $res->methodNotAllowed();
+    }
+}
+
+function autoOrderNum(CQLite $db): string
+{
+    $count = $db->count('orders');
+    return 'ORD-' . str_pad((string)($count + 1), 5, '0', STR_PAD_LEFT);
+}
+
+function autoCreateClient(string $name, string $phone, CQLite $db): void
+{
+    if (!$name || $name === 'Без имени') return;
+    $existing = $db->selectOne('clients', ['name' => $name]);
+    if (!$existing) {
+        $db->insert('clients', [
+            'id'    => CQLite::uid('cli'),
+            'name'  => $name,
+            'phone' => $phone,
+        ]);
+    }
+}
+
+function decodeOrderRow(array $row): array
+{
+    foreach (['files','options','extra'] as $field) {
+        if (isset($row[$field]) && is_string($row[$field])) {
+            $decoded = json_decode($row[$field], true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $row[$field] = $decoded;
+            }
+        }
+    }
+    return $row;
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — ФИНАНСЫ
+// ════════════════════════════════════════════════════════════
+function handleFinance(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res, Logger $log
+): void {
+    switch ($method) {
+
+        case 'GET':
+            $where   = [];
+            $options = ['order' => 'date DESC, created_at DESC'];
+
+            if (!empty($params['type']))     $where['type']       = $params['type'];
+            if (!empty($params['month']))    $where['date LIKE']  = $params['month'] . '%';
+            if (!empty($params['date']))     $where['date LIKE']  = $params['date']  . '%';
+            if (!empty($params['order_id'])) $where['order_id']   = $params['order_id'];
+
+            $page    = max(1,   (int)($params['page']     ?? 1));
+            $perPage = min(500, (int)($params['per_page'] ?? 200));
+
+            $result = $db->paginate('finance', $where, $page, $perPage, $options);
+            $res->ok($result);
+            break;
+
+        case 'POST':
+            if (empty($body)) { $res->badRequest('Нет данных'); return; }
+
+            $v = new Validator($body);
+            $v->required('type')->required('amount');
+            $v->in('type', ['income','expense']);
+            if ($v->fails()) { $res->badRequest($v->errors()); return; }
+
+            $row = [
+                'id'          => CQLite::uid('fin'),
+                'type'        => $body['type'],
+                'category'    => $body['category']    ?? '',
+                'description' => $body['description'] ?? $body['desc'] ?? '',
+                'amount'      => (float)$body['amount'],
+                'method'      => $body['method']      ?? 'Наличные',
+                'client'      => $body['client']      ?? '',
+                'order_id'    => $body['order_id']    ?? null,
+                'date'        => !empty($body['date'])
+                    ? substr($body['date'], 0, 19)
+                    : date('Y-m-d H:i:s'),
+            ];
+
+            $db->insert('finance', $row);
+            $log->action(
+                'FINANCE_' . strtoupper($body['type']),
+                ($body['type'] === 'income' ? '+' : '-') . $body['amount'] . '₽ ' . ($body['category'] ?? '')
+            );
+            $res->ok(['data' => $row, 'id' => $row['id']]);
+            break;
+
+        case 'DELETE':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->delete('finance', ['id' => $id]);
+            $log->action('FINANCE_DELETE', 'ID: ' . $id);
+            $res->ok(['deleted' => $id]);
+            break;
+
+        default:
+            $res->methodNotAllowed();
+    }
+}
+
+function handleFinanceSummary(array $params, CQLite $db, Response $res): void
+{
+    $month = $params['month'] ?? date('Y-m');
+    $today = date('Y-m-d');
+
+    $income   = $db->sum('finance', 'amount', ['type' => 'income',  'date LIKE' => $month . '%']);
+    $expense  = $db->sum('finance', 'amount', ['type' => 'expense', 'date LIKE' => $month . '%']);
+    $incToday = $db->sum('finance', 'amount', ['type' => 'income',  'date LIKE' => $today . '%']);
+    $expToday = $db->sum('finance', 'amount', ['type' => 'expense', 'date LIKE' => $today . '%']);
+
+    $res->ok([
+        'month'   => $month,
+        'income'  => $income,
+        'expense' => $expense,
+        'profit'  => $income - $expense,
+        'margin'  => $income > 0 ? round(($income - $expense) / $income * 100, 1) : 0,
+        'today'   => [
+            'income'  => $incToday,
+            'expense' => $expToday,
+            'profit'  => $incToday - $expToday,
+        ],
+    ]);
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — КЛИЕНТЫ
+// ════════════════════════════════════════════════════════════
+function handleClients(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res, Logger $log
+): void {
+    switch ($method) {
+
+        case 'GET':
+            if ($id) {
+                $client = $db->selectOne('clients', ['id' => $id]);
+                if (!$client) { $res->notFound('Клиент ' . $id); return; }
+                $res->ok(['data' => $client]);
+                return;
+            }
+            if (!empty($params['search'])) {
+                $s    = '%' . $params['search'] . '%';
+                $rows = $db->query(
+                    'SELECT * FROM clients WHERE name LIKE ? OR phone LIKE ? OR email LIKE ? ORDER BY name',
+                    [$s, $s, $s]
+                );
+                $res->ok(['data' => $rows, 'total' => count($rows)]);
+                return;
+            }
+            $result = $db->paginate('clients', [], (int)($params['page'] ?? 1), 200, ['order' => 'name ASC']);
+            $res->ok($result);
+            break;
+
+        case 'POST':
+            if (empty($body['name'])) { $res->badRequest('Нет имени'); return; }
+
+            $row = [
+                'id'       => CQLite::uid('cli'),
+                'name'     => trim($body['name']),
+                'type'     => $body['type']     ?? 'Физическое лицо',
+                'phone'    => $body['phone']    ?? '',
+                'email'    => $body['email']    ?? '',
+                'address'  => $body['address']  ?? '',
+                'inn'      => $body['inn']       ?? '',
+                'biz_cat'  => $body['bizcat']   ?? '',
+                'discount' => (float)($body['discount'] ?? 0),
+                'notes'    => $body['notes']    ?? '',
+            ];
+            $db->insert('clients', $row);
+            $log->action('CLIENT_CREATE', $row['name']);
+            $res->ok(['data' => $row, 'id' => $row['id']]);
+            break;
+
+        case 'PUT':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $existing = $db->selectOne('clients', ['id' => $id]);
+            if (!$existing) { $res->notFound('Клиент ' . $id); return; }
+
+            $allowed = ['name','type','phone','email','address','inn','biz_cat','discount','notes'];
+            $update  = [];
+            foreach ($allowed as $f) {
+                if (array_key_exists($f, $body)) $update[$f] = $body[$f];
+            }
+            if (!empty($update)) $db->update('clients', $update, ['id' => $id]);
+            $res->ok(['data' => $db->selectOne('clients', ['id' => $id])]);
+            break;
+
+        case 'DELETE':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->delete('clients', ['id' => $id]);
+            $log->action('CLIENT_DELETE', 'ID: ' . $id);
+            $res->ok(['deleted' => $id]);
+            break;
+
+        default:
+            $res->methodNotAllowed();
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — СКЛАД
+// ════════════════════════════════════════════════════════════
+function handleWarehouse(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res, Logger $log
+): void {
+    switch ($method) {
+
+        case 'GET':
+            $where   = [];
+            $options = ['order' => 'name ASC'];
+
+            if (!empty($params['category'])) $where['category'] = $params['category'];
+
+            $items = $db->select('warehouse', $where, $options);
+            $items = array_map(function ($i) {
+                $i['isLow'] = (float)$i['qty'] <= (float)$i['min_qty'];
+                return $i;
+            }, $items);
+            $res->ok(['data' => $items, 'total' => count($items)]);
+            break;
+
+        case 'POST':
+            if (empty($body['name'])) { $res->badRequest('Нет наименования'); return; }
+
+            $row = [
+                'id'       => CQLite::uid('wh'),
+                'name'     => trim($body['name']),
+                'category' => $body['category'] ?? 'Прочее',
+                'unit'     => $body['unit']      ?? 'шт',
+                'qty'      => (float)($body['qty']     ?? 0),
+                'min_qty'  => (float)($body['min_qty'] ?? $body['minQty'] ?? 0),
+                'price'    => (float)($body['price']   ?? 0),
+            ];
+            $db->insert('warehouse', $row);
+            $log->action('WAREHOUSE_ADD', $row['name']);
+            $res->ok(['data' => $row, 'id' => $row['id']]);
+            break;
+
+        case 'DELETE':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->delete('warehouse', ['id' => $id]);
+            $db->delete('warehouse_movements', ['item_id' => $id]);
+            $log->action('WAREHOUSE_DELETE', 'ID: ' . $id);
+            $res->ok(['deleted' => $id]);
+            break;
+
+        default:
+            $res->methodNotAllowed();
+    }
+}
+
+// FIX: убрана неверная проверка $type !== 'POST'
+function handleWarehouseAction(string $type, array $body, CQLite $db, Response $res, Logger $log): void
+{
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        $res->methodNotAllowed(); return;
+    }
+
+    $id  = $body['id']  ?? null;
+    $qty = (float)($body['qty'] ?? 0);
+
+    if (!$id || $qty <= 0) { $res->badRequest('Нет ID или количества'); return; }
+
+    $item = $db->selectOne('warehouse', ['id' => $id]);
+    if (!$item) { $res->notFound('Позиция ' . $id); return; }
+
+    if ($type === 'deduct' && (float)$item['qty'] < $qty) {
+        $res->badRequest('Недостаточно остатка: ' . $item['qty'] . ' ' . $item['unit']); return;
+    }
+
+    $newQty = $type === 'restock'
+        ? (float)$item['qty'] + $qty
+        : (float)$item['qty'] - $qty;
+
+    $db->update('warehouse', ['qty' => $newQty], ['id' => $id]);
+    $db->insert('warehouse_movements', [
+        'item_id' => $id,
+        'type'    => $type,
+        'qty'     => $qty,
+        'comment' => $body['comment'] ?? '',
+    ]);
+
+    $isLow = $newQty <= (float)$item['min_qty'];
+    $alert = $isLow ? "«{$item['name']}» заканчивается! Остаток: {$newQty} {$item['unit']}" : null;
+
+    $log->action('WAREHOUSE_' . strtoupper($type), $item['name'] . ' ' . ($type === 'restock' ? '+' : '-') . $qty);
+
+    $res->ok(['qty' => $newQty, 'isLow' => $isLow, 'alert' => $alert]);
+}
+
+function handleWarehouseHistory(CQLite $db, Response $res): void
+{
+    $rows = $db->query(
+        'SELECT m.*, w.name, w.unit
+         FROM warehouse_movements m
+         LEFT JOIN warehouse w ON w.id = m.item_id
+         ORDER BY m.created_at DESC
+         LIMIT 100'
+    );
+    $res->ok(['data' => $rows]);
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — ЗАМЕТКИ
+// ════════════════════════════════════════════════════════════
+function handleNotes(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res, Logger $log
+): void {
+    switch ($method) {
+
+        case 'GET':
+            $rows = $db->select('notes', [], ['order' => 'created_at DESC']);
+            $res->ok(['data' => $rows]);
+            break;
+
+        case 'POST':
+            if (empty($body['title']) && empty($body['body'])) {
+                $res->badRequest('Нет текста'); return;
+            }
+            $row = [
+                'title'    => $body['title']    ?? 'Без заголовка',
+                'body'     => $body['body']     ?? '',
+                'priority' => $body['priority'] ?? 'normal',
+                'shift'    => $body['shift']    ?? '',
+                'is_read'  => 0,
+            ];
+            $newId      = $db->insert('notes', $row);
+            $row['id']  = $newId;
+            $res->ok(['data' => $row, 'id' => $newId]);
+            break;
+
+        case 'PUT':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->update('notes',
+                array_intersect_key($body, array_flip(['title','body','priority','shift','is_read'])),
+                ['id' => $id]
+            );
+            $res->ok(['data' => $db->selectOne('notes', ['id' => $id])]);
+            break;
+
+        case 'DELETE':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->delete('notes', ['id' => $id]);
+            $res->ok(['deleted' => $id]);
+            break;
+
+        default:
+            $res->methodNotAllowed();
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — КАЛЕНДАРЬ
+// ════════════════════════════════════════════════════════════
+function handleCalendar(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res, Logger $log
+): void {
+    switch ($method) {
+
+        case 'GET':
+            $where   = [];
+            $options = ['order' => 'date ASC, time ASC'];
+
+            if (!empty($params['from'])) $where['date >='] = $params['from'];
+            if (!empty($params['to']))   $where['date <='] = $params['to'];
+
+            $rows = $db->select('cal_events', $where, $options);
+            $res->ok(['data' => $rows]);
+            break;
+
+        case 'POST':
+            if (empty($body['title'])) { $res->badRequest('Нет заголовка'); return; }
+
+            $row = [
+                'id'       => CQLite::uid('cal'),
+                'title'    => $body['title'],
+                'date'     => $body['date']     ?? date('Y-m-d'),
+                'time'     => $body['time']     ?? '',
+                'type'     => $body['type']     ?? 'task',
+                'color'    => $body['color']    ?? '#7c3aed',
+                'note'     => $body['note']     ?? '',
+                'order_id' => $body['order_id'] ?? null,
+            ];
+            $db->insert('cal_events', $row);
+            $res->ok(['data' => $row, 'id' => $row['id']]);
+            break;
+
+        case 'DELETE':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->delete('cal_events', ['id' => $id]);
+            $res->ok(['deleted' => $id]);
+            break;
+
+        default:
+            $res->methodNotAllowed();
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — НАСТРОЙКИ
+// ════════════════════════════════════════════════════════════
+function handleSettings(string $method, array $body, CQLite $db, Response $res, Logger $log): void
+{
+    switch ($method) {
+
+        case 'GET':
+            $res->ok(['data' => $db->getSettings()]);
+            break;
+
+        case 'POST':
+        case 'PUT':
+            if (empty($body)) { $res->badRequest('Нет данных'); return; }
+            $db->transaction(function () use ($body, $db) {
+                $db->setSettings($body);
+            });
+            $log->action('SETTINGS_SAVE', implode(', ', array_keys($body)));
+            $res->ok(['message' => 'Настройки сохранены']);
+            break;
+
+        default:
+            $res->methodNotAllowed();
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — СТАТИСТИКА
+// ════════════════════════════════════════════════════════════
+function handleStats(array $params, CQLite $db, Response $res): void
+{
+    $month = $params['month'] ?? date('Y-m');
+    $today = date('Y-m-d');
+
+    $ordersTotal  = $db->count('orders');
+    $ordersMonth  = $db->count('orders', ['created_at LIKE' => $month . '%']);
+    $ordersToday  = $db->count('orders', ['created_at LIKE' => $today . '%']);
+    $ordersActive = $db->count('orders', ['status IN' => ['new','work']]);
+    $ordersDone   = $db->count('orders', ['status' => 'done']);
+
+    $income  = $db->sum('finance', 'amount', ['type' => 'income',  'date LIKE' => $month . '%']);
+    $expense = $db->sum('finance', 'amount', ['type' => 'expense', 'date LIKE' => $month . '%']);
+
+    $avgRow   = $db->query(
+        'SELECT AVG(total) as avg FROM orders WHERE created_at LIKE ? AND total > 0',
+        [$month . '%']
+    );
+    $avgCheck = round((float)($avgRow[0]['avg'] ?? 0));
+
+    $byService = $db->query(
+        'SELECT service_label, COUNT(*) as cnt, SUM(total) as sum
+         FROM orders WHERE created_at LIKE ?
+         GROUP BY service_label ORDER BY cnt DESC',
+        [$month . '%']
+    );
+    $topClients = $db->query(
+        'SELECT client, COUNT(*) as orders, SUM(total) as total
+         FROM orders WHERE created_at LIKE ? AND client != ""
+         GROUP BY client ORDER BY total DESC LIMIT 5',
+        [$month . '%']
+    );
+    $clientsTotal = $db->count('clients');
+
+    $res->ok([
+        'month'       => $month,
+        'orders'      => [
+            'total'  => $ordersTotal,
+            'month'  => $ordersMonth,
+            'today'  => $ordersToday,
+            'active' => $ordersActive,
+            'done'   => $ordersDone,
+        ],
+        'finance'     => [
+            'income'  => $income,
+            'expense' => $expense,
+            'profit'  => $income - $expense,
+            'margin'  => $income > 0 ? round(($income - $expense) / $income * 100, 1) : 0,
+        ],
+        'avg_check'   => $avgCheck,
+        'clients'     => $clientsTotal,
+        'by_service'  => $byService,
+        'top_clients' => $topClients,
+    ]);
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — СОТРУДНИКИ
+// ════════════════════════════════════════════════════════════
+function handleStaff(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res, Logger $log
+): void {
+    switch ($method) {
+
+        case 'GET':
+            $rows = $db->select('staff', ['is_active' => 1], ['order' => 'name ASC']);
+            $rows = array_map(fn($r) => array_diff_key($r, ['pin_hash' => '']), $rows);
+            $res->ok(['data' => $rows]);
+            break;
+
+        case 'POST':
+            $v = new Validator($body);
+            $v->required('name')->required('pin');
+            if ($v->fails()) { $res->badRequest($v->errors()); return; }
+
+            if (strlen((string)$body['pin']) < 4) {
+                $res->badRequest('PIN минимум 4 символа'); return;
+            }
+
+            $row = [
+                'id'        => CQLite::uid('st'),
+                'name'      => trim($body['name']),
+                'pin_hash'  => hashPin((string)$body['pin'], $body['name']),
+                'role'      => $body['role']  ?? 'Менеджер',
+                'phone'     => $body['phone'] ?? '',
+                'color'     => $body['color'] ?? '#7c3aed',
+                'is_active' => 1,
+            ];
+            $db->insert('staff', $row);
+            $db->insert('staff_log', [
+                'staff_id'   => $row['id'],
+                'staff_name' => $row['name'],
+                'action'     => 'Добавлен',
+                'details'    => $row['role'],
+            ]);
+            $log->action('STAFF_ADD', $row['name']);
+            unset($row['pin_hash']);
+            $res->ok(['data' => $row, 'id' => $row['id']]);
+            break;
+
+        case 'DELETE':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->update('staff', ['is_active' => 0], ['id' => $id]);
+            $log->action('STAFF_DELETE', 'ID: ' . $id);
+            $res->ok(['deleted' => $id]);
+            break;
+
+        default:
+            $res->methodNotAllowed();
+    }
+}
+
+function handleStaffVerify(array $body, CQLite $db, Response $res): void
+{
+    $member = $db->selectOne('staff', ['name' => $body['name'] ?? '', 'is_active' => 1]);
+    if (!$member) { $res->ok(['ok' => false, 'error' => 'Не найден']); return; }
+
+    $hash = hashPin((string)($body['pin'] ?? ''), $body['name']);
+    if ($hash === $member['pin_hash']) {
+        $res->ok(['ok' => true, 'staff' => [
+            'id'    => $member['id'],
+            'name'  => $member['name'],
+            'role'  => $member['role'],
+            'color' => $member['color'],
+        ]]);
+    } else {
+        $res->ok(['ok' => false, 'error' => 'Неверный PIN']);
+    }
+}
+
+function handleStaffLog(CQLite $db, Response $res): void
+{
+    $rows = $db->select('staff_log', [], ['order' => 'created_at DESC', 'limit' => 50]);
+    $res->ok(['data' => $rows]);
+}
+
+function hashPin(string $pin, string $name): string
+{
+    return hash('sha256', $pin . '::' . mb_strtolower(mb_substr($name, 0, 4)));
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — ЗАРПЛАТА
+// ════════════════════════════════════════════════════════════
+function handleSalary(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res, Logger $log
+): void {
+    switch ($method) {
+
+        case 'GET':
+            $where   = [];
+            $options = ['order' => 'created_at DESC'];
+            if (!empty($params['staff_id'])) $where['staff_id'] = $params['staff_id'];
+            if (!empty($params['period']))   $where['period']   = $params['period'];
+            $rows = $db->select('salary', $where, $options);
+            $res->ok(['data' => $rows]);
+            break;
+
+        case 'POST':
+            $v = new Validator($body);
+            $v->required('staff_name')->required('amount');
+            if ($v->fails()) { $res->badRequest($v->errors()); return; }
+
+            $row = [
+                'staff_id'   => $body['staff_id']   ?? null,
+                'staff_name' => $body['staff_name'],
+                'type'       => $body['type']       ?? 'salary',
+                'amount'     => (float)$body['amount'],
+                'period'     => $body['period']     ?? date('Y-m'),
+                'comment'    => $body['comment']    ?? '',
+            ];
+            $newId      = $db->insert('salary', $row);
+            $row['id']  = $newId;
+            $log->action('SALARY_ADD', $row['staff_name'] . ' ' . $row['amount'] . '₽');
+            $res->ok(['data' => $row, 'id' => $newId]);
+            break;
+
+        case 'DELETE':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->delete('salary', ['id' => $id]);
+            $res->ok(['deleted' => $id]);
+            break;
+
+        default:
+            $res->methodNotAllowed();
+    }
+}
+
+function handleSalaryEmployees(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res
+): void {
+    handleStaff($method, $body, $params, $id, $db, $res, new Logger($db));
+}
+
+function handleSalaryShifts(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res
+): void {
+    handleShifts($method, $body, $params, $id, $db, $res, new Logger($db));
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — СМЕНЫ
+// ════════════════════════════════════════════════════════════
+function handleShifts(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res, Logger $log
+): void {
+    switch ($method) {
+
+        case 'GET':
+            $where = [];
+            if (!empty($params['status']))   $where['status']   = $params['status'];
+            if (!empty($params['staff_id'])) $where['staff_id'] = $params['staff_id'];
+            $rows = $db->select('shifts', $where, ['order' => 'opened_at DESC', 'limit' => 50]);
+            $res->ok(['data' => $rows]);
+            break;
+
+        case 'DELETE':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->delete('shifts', ['id' => $id]);
+            $res->ok(['deleted' => $id]);
+            break;
+
+        default:
+            $res->methodNotAllowed();
+    }
+}
+
+function handleShiftOpen(array $body, CQLite $db, Response $res, Logger $log): void
+{
+    $db->update('shifts', ['status' => 'closed', 'closed_at' => date('Y-m-d H:i:s')], ['status' => 'open']);
+
+    $row = [
+        'id'         => CQLite::uid('sh'),
+        'staff_id'   => $body['staff_id']   ?? null,
+        'staff_name' => $body['staff_name'] ?? '',
+        'opened_at'  => date('Y-m-d H:i:s'),
+        'status'     => 'open',
+        'notes'      => $body['notes'] ?? '',
     ];
-    foreach ($cols as $status => [$icon, $label, $cls]):
-    ?>
-    <div class="kanban-col" data-status="<?= $status ?>">
-      <div class="kanban-col-header <?= $cls ?>">
-        <div class="kanban-col-title">
-          <span class="kanban-col-icon"><?= $icon ?></span>
-          <?= $label ?>
-          <span class="kanban-col-badge" id="kbBadge_<?= $status ?>">0</span>
-        </div>
-        <?php if ($status === 'new'): ?>
-        <button class="kanban-add-btn" onclick="openModal('orderModal')" title="Добавить">+</button>
-        <?php endif; ?>
-      </div>
-      <div class="kanban-cards" id="kbCol_<?= $status ?>"
-           ondragover="event.preventDefault();highlightDrop(this)"
-           ondragleave="unhighlightDrop(this)"
-           ondrop="dropCard(event,'<?= $status ?>')">
-      </div>
-    </div>
-    <?php endforeach; ?>
-  </div>
-</div>
+    $db->insert('shifts', $row);
+    $log->action('SHIFT_OPEN', $row['staff_name']);
+    $res->ok(['data' => $row]);
+}
 
-<!-- ══════════════════════════════════════════════════════════
-     PAGE: FINANCE
-══════════════════════════════════════════════════════════ -->
-<div class="page" id="page-finance">
-  <div class="page-header">
-    <div>
-      <div class="page-title">Доходы и Расходы</div>
-      <div class="page-subtitle">Журнал финансовых операций</div>
-    </div>
-    <div style="display:flex;gap:8px;">
-      <button class="btn btn-success btn-sm" onclick="openModal('incomeModal')">+ Доход</button>
-      <button class="btn btn-danger  btn-sm" onclick="openModal('expenseModal')">− Расход</button>
-    </div>
-  </div>
-  <div class="finance-summary">
-    <div class="finance-block profit">
-      <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:4px;">ДОХОДЫ (МЕСЯЦ)</div>
-      <div style="font-size:1.6rem;font-weight:800;color:var(--accent3);" id="finIncomeTotal">—</div>
-    </div>
-    <div class="finance-block loss">
-      <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:4px;">РАСХОДЫ (МЕСЯЦ)</div>
-      <div style="font-size:1.6rem;font-weight:800;color:var(--danger);" id="finExpenseTotal">—</div>
-    </div>
-    <div class="finance-block balance">
-      <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:4px;">ПРИБЫЛЬ (МЕСЯЦ)</div>
-      <div style="font-size:1.6rem;font-weight:800;color:var(--accent);" id="finProfitTotal">—</div>
-    </div>
-  </div>
-  <div class="card">
-    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;">
-      <div class="search-bar" style="min-width:220px;">
-        <svg width="14" height="14" fill="none" stroke="var(--text-muted)" stroke-width="2" viewBox="0 0 24 24">
-          <circle cx="11" cy="11" r="8"/>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
-        <input type="text" placeholder="Поиск..." id="finSearch" oninput="renderFinanceTable()">
-      </div>
-      <select class="form-select" style="width:130px;" id="finTypeFilter" onchange="renderFinanceTable()">
-        <option value="">Всё</option>
-        <option value="income">Доходы</option>
-        <option value="expense">Расходы</option>
-      </select>
-      <input type="month" class="form-input" id="finMonthFilter" style="width:160px;" onchange="renderFinanceTable()">
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Дата</th><th>Тип</th><th>Категория</th>
-            <th>Описание</th><th>Сумма</th><th>Метод</th><th>Удалить</th>
-          </tr>
-        </thead>
-        <tbody id="financeTableBody">
-          <tr><td colspan="7">
-            <div class="empty-state">
-              <div class="icon">💰</div>
-              <div class="title">Загрузка операций...</div>
-            </div>
-          </td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
+function handleShiftClose(array $body, CQLite $db, Response $res, Logger $log): void
+{
+    $shift = $db->selectOne('shifts', ['status' => 'open']);
+    if (!$shift) { $res->badRequest('Нет открытой смены'); return; }
 
-<!-- ══════════════════════════════════════════════════════════
-     PAGE: STATS
-══════════════════════════════════════════════════════════ -->
-<div class="page" id="page-stats">
-  <div class="page-header">
-    <div>
-      <div class="page-title">Статистика</div>
-      <div class="page-subtitle">Аналитика продаж и услуг</div>
-    </div>
-    <select class="form-select" style="width:140px;" id="statsPeriod" onchange="renderStats()">
-      <option value="month">Этот месяц</option>
-      <option value="week">Эта неделя</option>
-      <option value="all">За всё время</option>
-    </select>
-  </div>
-  <div class="grid-4 mb-16">
-    <div class="stat-card purple"><div class="stat-icon">📋</div><div class="stat-label">Всего заказов</div><div class="stat-value purple" id="statTotalOrders">—</div></div>
-    <div class="stat-card green"><div class="stat-icon">✅</div><div class="stat-label">Выполнено</div><div class="stat-value green" id="statDoneOrders">—</div></div>
-    <div class="stat-card cyan"><div class="stat-icon">👥</div><div class="stat-label">Клиентов</div><div class="stat-value cyan" id="statClients">—</div></div>
-    <div class="stat-card red"><div class="stat-icon">⚡</div><div class="stat-label">Средний чек</div><div class="stat-value red" id="statAvgCheck">—</div></div>
-  </div>
-  <div class="grid-2" style="gap:20px;">
-    <div class="card"><div class="card-title">По видам услуг</div><div id="statsByService"></div></div>
-    <div class="card"><div class="card-title">По категориям</div><div id="statsByCategory"></div></div>
-  </div>
-  <div class="card mt-16">
-    <div class="card-title">Популярные услуги</div>
-    <div id="statsServiceBars" style="margin-top:8px;"></div>
-  </div>
-</div>
+    $today   = date('Y-m-d');
+    $income  = $db->sum('finance', 'amount', ['type' => 'income',  'date LIKE' => $today . '%']);
+    $expense = $db->sum('finance', 'amount', ['type' => 'expense', 'date LIKE' => $today . '%']);
+    $orders  = $db->count('orders', ['created_at LIKE' => $today . '%']);
 
-<!-- ══════════════════════════════════════════════════════════
-     PAGE: ACCOUNTING
-══════════════════════════════════════════════════════════ -->
-<div class="page" id="page-accounting">
-  <div class="page-header">
-    <div>
-      <div class="page-title">Финансовый учёт</div>
-      <div class="page-subtitle">Детальная бухгалтерия и отчёты</div>
-    </div>
-    <button class="btn btn-secondary btn-sm" onclick="window.print()">🖨️ Распечатать</button>
-  </div>
-  <div class="card mb-16">
-    <div class="card-title">Сводный отчёт по месяцам</div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Месяц</th><th>Доходы</th><th>Расходы</th><th>Прибыль</th><th>Заказов</th><th>Маржа</th></tr></thead>
-        <tbody id="accountingTable">
-          <tr><td colspan="6"><div class="empty-state"><div class="icon">📊</div><div class="title">Загрузка...</div></div></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-  <div class="grid-2" style="gap:16px;">
-    <div class="card"><div class="card-title">Расходы по категориям</div><div id="expenseByCategory"></div></div>
-    <div class="card"><div class="card-title">Доходы по категориям</div><div id="incomeByCategory"></div></div>
-  </div>
-</div>
+    $db->update('shifts', [
+        'status'       => 'closed',
+        'closed_at'    => date('Y-m-d H:i:s'),
+        'income'       => $income,
+        'expense'      => $expense,
+        'orders_count' => $orders,
+        'notes'        => $body['notes'] ?? $shift['notes'],
+    ], ['id' => $shift['id']]);
 
-<!-- ══════════════════════════════════════════════════════════
-     PAGE: CLIENTS
-══════════════════════════════════════════════════════════ -->
-<div class="page" id="page-clients">
-  <div class="page-header">
-    <div>
-      <div class="page-title">База клиентов</div>
-      <div class="page-subtitle">CRM — управление клиентами</div>
-    </div>
-    <div style="display:flex;gap:8px;align-items:center;">
-      <div class="search-bar" style="min-width:220px;">
-        <svg width="14" height="14" fill="none" stroke="var(--text-muted)" stroke-width="2" viewBox="0 0 24 24">
-          <circle cx="11" cy="11" r="8"/>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
-        <input type="text" placeholder="Поиск клиента..." id="clientSearch" oninput="renderClients()">
-      </div>
-      <button class="btn btn-primary btn-sm" onclick="openModal('clientModal')">+ Добавить клиента</button>
-    </div>
-  </div>
-  <div class="grid-auto" id="clientsGrid">
-    <div class="empty-state card" style="grid-column:1/-1;">
-      <div class="icon">👥</div><div class="title">Загрузка...</div>
-    </div>
-  </div>
-</div>
+    $log->action('SHIFT_CLOSE', $shift['staff_name'] . ' доход:' . $income);
+    $res->ok(['data' => $db->selectOne('shifts', ['id' => $shift['id']])]);
+}
 
-<!-- ══════════════════════════════════════════════════════════
-     PAGE: NOTES
-══════════════════════════════════════════════════════════ -->
-<div class="page" id="page-notes">
-  <div class="page-header">
-    <div>
-      <div class="page-title">📝 Заметки смены</div>
-      <div class="page-subtitle">Важные пометки для следующей смены</div>
-    </div>
-    <button class="btn btn-primary btn-sm" onclick="openModal('noteModal')">+ Новая заметка</button>
-  </div>
-  <div class="grid-3" id="notesGrid">
-    <div class="empty-state card" style="grid-column:1/-1;">
-      <div class="icon">📝</div><div class="title">Загрузка...</div>
-    </div>
-  </div>
-</div>
+// ════════════════════════════════════════════════════════════
+// HANDLERS — ДОЛГИ
+// ════════════════════════════════════════════════════════════
+function handleDebts(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res, Logger $log
+): void {
+    switch ($method) {
 
-<!-- ══════════════════════════════════════════════════════════
-     PAGE: WAREHOUSE
-══════════════════════════════════════════════════════════ -->
-<div class="page" id="page-warehouse">
-  <div class="page-header">
-    <div>
-      <div class="page-title">📦 Склад материалов</div>
-      <div class="page-subtitle">Остатки бумаги, чернил, расходников</div>
-    </div>
-    <div style="display:flex;gap:8px;">
-      <button class="btn btn-secondary btn-sm" onclick="showWarehouseMovements()">📋 История</button>
-      <button class="btn btn-primary    btn-sm" onclick="openModal('warehouseAddModal')">+ Добавить</button>
-    </div>
-  </div>
-  <div class="grid-4 mb-16">
-    <div class="stat-card cyan">  <div class="stat-icon">📦</div><div class="stat-label">Всего позиций</div><div class="stat-value cyan"   id="wh_total">—</div></div>
-    <div class="stat-card red">   <div class="stat-icon">⚠️</div><div class="stat-label">Заканчивается</div><div class="stat-value red"    id="wh_low">—</div></div>
-    <div class="stat-card green"> <div class="stat-icon">✅</div><div class="stat-label">В норме</div>      <div class="stat-value green"  id="wh_ok">—</div></div>
-    <div class="stat-card purple"><div class="stat-icon">💰</div><div class="stat-label">Сумма склада</div> <div class="stat-value purple" id="wh_sum">—</div></div>
-  </div>
-  <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;">
-    <div class="search-bar" style="min-width:220px;">
-      <svg width="14" height="14" fill="none" stroke="var(--text-muted)" stroke-width="2" viewBox="0 0 24 24">
-        <circle cx="11" cy="11" r="8"/>
-        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-      </svg>
-      <input type="text" placeholder="Поиск..." id="whSearch" oninput="renderWarehouse()">
-    </div>
-    <select class="form-select" style="width:160px;" id="whCatFilter" onchange="renderWarehouse()">
-      <option value="">Все категории</option>
-      <option>Бумага</option><option>Чернила / Тонер</option>
-      <option>Баннерные материалы</option><option>Плёнки и самоклейка</option>
-      <option>Переплётные материалы</option><option>Химия и обслуживание</option>
-      <option>Прочее</option>
-    </select>
-    <select class="form-select" style="width:140px;" id="whStatusFilter" onchange="renderWarehouse()">
-      <option value="">Все остатки</option>
-      <option value="low">Заканчивается</option>
-      <option value="ok">В норме</option>
-    </select>
-  </div>
-  <div class="card">
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Наименование</th><th>Категория</th><th>Остаток</th><th>Мин.</th><th>Статус</th><th>Цена</th><th>Сумма</th><th>Действия</th></tr>
-        </thead>
-        <tbody id="warehouseTableBody">
-          <tr><td colspan="8"><div class="empty-state"><div class="icon">📦</div><div class="title">Загрузка...</div></div></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
+        case 'GET':
+            $where = [];
+            if (!empty($params['status'])) $where['status'] = $params['status'];
+            $rows = $db->select('debts', $where, ['order' => 'created_at DESC']);
+            $res->ok(['data' => $rows]);
+            break;
 
-<!-- ══════════════════════════════════════════════════════════
-     PAGE: CALENDAR
-══════════════════════════════════════════════════════════ -->
-<div class="page" id="page-calendar">
-  <div class="page-header">
-    <div>
-      <div class="page-title">📅 Календарь производства</div>
-      <div class="page-subtitle">Дедлайны заказов и задачи</div>
-    </div>
-    <div style="display:flex;gap:8px;align-items:center;">
-      <button class="btn btn-secondary btn-sm" onclick="calPrevMonth()">← Назад</button>
-      <span id="calMonthLabel" style="font-weight:700;min-width:140px;text-align:center;"></span>
-      <button class="btn btn-secondary btn-sm" onclick="calNextMonth()">Вперёд →</button>
-      <button class="btn btn-primary   btn-sm" onclick="openModal('calEventModal')">+ Задача</button>
-    </div>
-  </div>
-  <div class="card" style="padding:0;overflow:hidden;">
-    <div id="calendarGrid" style="display:grid;grid-template-columns:repeat(7,1fr);"></div>
-  </div>
-</div>
+        case 'POST':
+            $v = new Validator($body);
+            $v->required('client')->required('amount');
+            if ($v->fails()) { $res->badRequest($v->errors()); return; }
 
-<!-- ══════════════════════════════════════════════════════════
-     PAGE: SETTINGS
-══════════════════════════════════════════════════════════ -->
-<div class="page" id="page-settings">
-  <div class="page-header">
-    <div>
-      <div class="page-title">⚙️ Настройки</div>
-      <div class="page-subtitle">Реквизиты, печать, чеки, интеграции</div>
-    </div>
-    <button class="btn btn-success btn-sm" onclick="saveSettings()">💾 Сохранить всё</button>
-  </div>
+            $row = [
+                'id'          => CQLite::uid('dbt'),
+                'client'      => $body['client'],
+                'phone'       => $body['phone']       ?? '',
+                'amount'      => (float)$body['amount'],
+                'description' => $body['description'] ?? '',
+                'order_id'    => $body['order_id']    ?? null,
+                'status'      => 'open',
+                'paid'        => 0,
+            ];
+            $db->insert('debts', $row);
+            $log->action('DEBT_ADD', $row['client'] . ' ' . $row['amount'] . '₽');
+            $res->ok(['data' => $row, 'id' => $row['id']]);
+            break;
 
-  <div class="grid-2" style="gap:20px;">
-    <div>
-      <!-- РЕКВИЗИТЫ -->
-      <div class="settings-section">
-        <div class="settings-title">🏢 Реквизиты компании</div>
-        <div class="form-group"><label class="form-label">Название</label><input class="form-input" id="setCompany" placeholder="ООО «Моя Типография»"></div>
-        <div class="form-row">
-          <div class="form-group"><label class="form-label">ИНН</label><input class="form-input" id="setInn" placeholder="7700000000"></div>
-          <div class="form-group"><label class="form-label">ОГРН</label><input class="form-input" id="setOgrn" placeholder="1234567890123"></div>
-        </div>
-        <div class="form-group"><label class="form-label">Адрес</label><input class="form-input" id="setAddress"></div>
-        <div class="form-row">
-          <div class="form-group"><label class="form-label">Телефон</label><input class="form-input" id="setPhone"></div>
-          <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="setEmail"></div>
-        </div>
-        <div class="form-group"><label class="form-label">Сайт</label><input class="form-input" id="setWebsite"></div>
-      </div>
+        case 'DELETE':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->delete('debts', ['id' => $id]);
+            $res->ok(['deleted' => $id]);
+            break;
 
-      <!-- БАНК -->
-      <div class="settings-section">
-        <div class="settings-title">🏦 Банковские реквизиты</div>
-        <div class="form-row">
-          <div class="form-group"><label class="form-label">Расчётный счёт</label><input class="form-input" id="setBankAcc"></div>
-          <div class="form-group"><label class="form-label">БИК</label><input class="form-input" id="setBik"></div>
-        </div>
-        <div class="form-group"><label class="form-label">Банк</label><input class="form-input" id="setBankName"></div>
-        <div class="form-row">
-          <div class="form-group"><label class="form-label">Кор. счёт</label><input class="form-input" id="setKorAcc"></div>
-          <div class="form-group"><label class="form-label">КПП</label><input class="form-input" id="setKpp"></div>
-        </div>
-      </div>
-    </div>
+        default:
+            $res->methodNotAllowed();
+    }
+}
 
-    <div>
-      <!-- ПЕЧАТЬ -->
-      <div class="settings-section">
-        <div class="settings-title">🖨️ Настройки чеков</div>
-        <div class="form-group"><label class="form-label">Шапка чека</label><textarea class="form-textarea" id="setReceiptHeader" rows="2"></textarea></div>
-        <div class="form-group"><label class="form-label">Подвал чека</label><textarea class="form-textarea" id="setReceiptFooter" rows="2"></textarea></div>
-        <div class="form-group"><label class="form-label">ФИО подписанта</label><input class="form-input" id="setSignatory"></div>
-        <div class="form-group"><label class="form-label">Должность</label><input class="form-input" id="setSignatoryTitle" placeholder="Менеджер"></div>
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label">НДС</label>
-            <select class="form-select" id="setVat">
-              <option value="0">Без НДС</option>
-              <option value="20">20%</option>
-              <option value="10">10%</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Валюта</label>
-            <select class="form-select" id="setCurrency">
-              <option value="₽">₽ Рубль</option>
-              <option value="$">$ Доллар</option>
-              <option value="€">€ Евро</option>
-            </select>
-          </div>
-        </div>
-      </div>
+function handleDebtPay(array $body, CQLite $db, Response $res, Logger $log): void
+{
+    $id     = $body['id']     ?? null;
+    $amount = (float)($body['amount'] ?? 0);
 
-      <!-- AI -->
-      <div class="settings-section">
-        <div class="settings-title">🔑 DeepSeek API</div>
-        <div class="form-group">
-          <label class="form-label">API ключ</label>
-          <input class="form-input" id="setApiKey" type="password" placeholder="sk-...">
-          <div class="form-hint">🔐 Хранится только на сервере</div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Модель</label>
-          <select class="form-select" id="setApiModel">
-            <option value="deepseek-chat">deepseek-chat</option>
-            <option value="deepseek-reasoner">deepseek-reasoner</option>
-          </select>
-        </div>
-        <button class="btn btn-secondary btn-sm" onclick="testApiKey()">🧪 Проверить ключ</button>
-      </div>
+    if (!$id || $amount <= 0) { $res->badRequest('Нет ID или суммы'); return; }
 
-      <!-- TELEGRAM -->
-      <div class="settings-section">
-        <div class="settings-title">📱 Telegram уведомления</div>
-        <div class="form-group">
-          <label class="form-label">Bot Token</label>
-          <input class="form-input" id="setTgToken" placeholder="1234567890:ABC...">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Chat ID директора</label>
-          <input class="form-input" id="setTgBossId" placeholder="123456789">
-        </div>
-        <button class="btn btn-secondary btn-sm" onclick="testTelegram()">📤 Тест уведомление</button>
-      </div>
+    $debt = $db->selectOne('debts', ['id' => $id]);
+    if (!$debt) { $res->notFound('Долг ' . $id); return; }
 
-      <!-- БД -->
-      <div class="settings-section">
-        <div class="settings-title">🗃️ База данных</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-          <button class="btn btn-secondary btn-sm" onclick="exportDB()">📤 Экспорт JSON</button>
-          <button class="btn btn-secondary btn-sm" onclick="importDB()">📥 Импорт JSON</button>
-          <button class="btn btn-danger    btn-sm" onclick="clearDB()">🗑️ Очистить всё</button>
-        </div>
-        <input type="file" id="importFile" accept=".json" style="display:none" onchange="loadImportFile(event)">
-        <div id="dbInfo" style="font-size:0.78rem;color:var(--text-muted);padding:10px;background:var(--bg-dark);border-radius:8px;border:1px solid var(--border);">
-          <div>Версия БД: <span id="dbVersion" style="color:var(--accent2);">—</span></div>
-          <div>Размер: <span id="dbSize" style="color:var(--accent2);">—</span></div>
-          <div>Последнее обновление: <span id="dbLastUpdate" style="color:var(--accent2);">—</span></div>
-        </div>
-      </div>
+    $newPaid = (float)$debt['paid'] + $amount;
+    $status  = $newPaid >= (float)$debt['amount'] ? 'closed' : 'partial';
 
-      <!-- МОДУЛИ -->
-      <div class="settings-section">
-        <div class="settings-title">🧩 Модули системы</div>
-        <div id="modulesGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"></div>
-      </div>
-    </div>
-  </div>
-</div>
+    $db->update('debts', ['paid' => $newPaid, 'status' => $status], ['id' => $id]);
+    $db->insert('finance', [
+        'id'          => CQLite::uid('fin'),
+        'type'        => 'income',
+        'category'    => 'Погашение долга',
+        'description' => 'Долг от ' . $debt['client'],
+        'amount'      => $amount,
+        'method'      => $body['method'] ?? 'Наличные',
+        'client'      => $debt['client'],
+        'date'        => date('Y-m-d H:i:s'),
+    ]);
 
-</main>
-</div><!-- /layout -->
+    $log->action('DEBT_PAY', $debt['client'] . ' +' . $amount . '₽');
+    $res->ok(['status' => $status, 'paid' => $newPaid]);
+}
 
-<!-- ══════════════════════════════════════════════════════════
-     MODALS
-══════════════════════════════════════════════════════════ -->
+// ════════════════════════════════════════════════════════════
+// HANDLERS — ЗАГРУЗКА ФАЙЛОВ
+// ════════════════════════════════════════════════════════════
+function handleUpload(CQLite $db, Response $res, Logger $log): void
+{
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        $res->methodNotAllowed(); return;
+    }
+    if (!is_dir(UPLOADS_DIR)) mkdir(UPLOADS_DIR, 0755, true);
+    if (empty($_FILES['file'])) { $res->badRequest('Файл не передан'); return; }
 
-<!-- ORDER MODAL -->
-<div class="modal-overlay" id="orderModal">
-  <div class="modal modal-lg">
-    <div class="modal-header">
-      <div class="modal-title">📋 <span id="orderModalTitle">Создание заказа</span></div>
-      <button class="modal-close" onclick="closeModal('orderModal')">✕</button>
-    </div>
-    <input type="hidden" id="ord_edit_id">
+    $file     = $_FILES['file'];
+    $origName = basename($file['name']);
+    $ext      = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+    $allowed  = ['jpg','jpeg','png','gif','pdf','ai','cdr','eps','tif','tiff','psd',
+                 'doc','docx','xlsx','zip','svg','webp'];
 
-    <div class="form-row mb-16">
-      <div class="form-group">
-        <label class="form-label">№ Заказа</label>
-        <input class="form-input" id="ord_num" readonly style="opacity:0.6;">
-        <div class="form-hint">💡 Генерируется автоматически</div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Дата приёма</label>
-        <input class="form-input" type="datetime-local" id="ord_date">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Срок выполнения</label>
-        <input class="form-input" type="datetime-local" id="ord_deadline">
-      </div>
-    </div>
+    if (!in_array($ext, $allowed)) { $res->badRequest('Недопустимый тип файла: ' . $ext); return; }
+    if ($file['size'] > 50 * 1024 * 1024) { $res->badRequest('Файл больше 50МБ'); return; }
 
-    <div class="form-row mb-16">
-      <div class="form-group">
-        <label class="form-label">Клиент <span style="color:var(--text-muted);font-weight:400;">(необязательно)</span></label>
-        <input class="form-input" id="ord_client" placeholder="Иван Иванов" list="clientsList">
-        <datalist id="clientsList"></datalist>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Телефон</label>
-        <input class="form-input" id="ord_phone" placeholder="+7 (___) ___-__-__">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Менеджер</label>
-        <input class="form-input" id="ord_manager" placeholder="Имя менеджера">
-      </div>
-    </div>
+    $orderId  = $_POST['order_id'] ?? '';
+    $prefix   = $orderId ? $orderId . '_' : '';
+    $newName  = $prefix . date('Ymd_His') . '_' . substr(bin2hex(random_bytes(4)), 0, 8) . '.' . $ext;
+    $destPath = UPLOADS_DIR . '/' . $newName;
 
-    <div class="section-label">Вид услуги</div>
-    <div class="order-service-tabs" id="serviceTabsBar">
-      <button class="order-service-tab active" onclick="switchServiceTab('photo',this)">📸 Фото</button>
-      <button class="order-service-tab" onclick="switchServiceTab('copy',this)">🖨️ Копи/Хост</button>
-      <button class="order-service-tab" onclick="switchServiceTab('banner',this)">🏳️ Баннер</button>
-      <button class="order-service-tab" onclick="switchServiceTab('design',this)">🎨 Дизайн</button>
-      <button class="order-service-tab" onclick="switchServiceTab('business',this)">💼 Бизнес-печать</button>
-      <button class="order-service-tab" onclick="switchServiceTab('wide',this)">🖼️ Широкий формат</button>
-      <button class="order-service-tab" onclick="switchServiceTab('promo',this)">🎁 Сувенирка</button>
-      <button class="order-service-tab" onclick="switchServiceTab('other',this)">⚙️ Прочее</button>
-    </div>
+    if (!move_uploaded_file($file['tmp_name'], $destPath)) {
+        $res->serverError('Ошибка сохранения файла'); return;
+    }
 
-    <!-- SERVICE TABS CONTENT — идентичны оригиналу, сокращаю для читаемости -->
-    <div class="service-tab-content active" id="stab-photo">
-      <div class="section-label">Фотопечать — параметры</div>
-      <div class="form-group">
-        <label class="form-label">Формат фото</label>
-        <div class="size-matrix" id="sizeMatrix-photo">
-          <?php foreach(['10×15','13×18','15×21','20×30','21×30 (А4)','30×40','30×45','40×60','50×70','60×90','70×100','Свой'] as $s): ?>
-          <button class="size-btn" onclick="selectSize(this,'photo')"><?= $s ?></button>
-          <?php endforeach; ?>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Кол-во штук</label><input class="form-input" type="number" id="photo_qty" placeholder="1" min="1" oninput="calcTotal()"></div>
-        <div class="form-group">
-          <label class="form-label">Материал</label>
-          <select class="form-select" id="photo_material">
-            <option>Глянец</option><option>Матовый</option><option>Холст (Canvas)</option><option>Шёлк</option><option>Металл</option>
-          </select>
-        </div>
-        <div class="form-group"><label class="form-label">Цена за шт. ₽</label><input class="form-input" type="number" id="photo_price" placeholder="0" oninput="calcTotal()"></div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Дополнительно</label>
-        <div class="checkbox-group">
-          <?php foreach(['Ламинация','Обрезка','Рамка','Коллаж','Ретушь','Чёрно-белое','Срочно ×2'] as $opt): ?>
-          <label class="checkbox-item" onclick="toggleCheck(this)"><input type="checkbox"><span class="checkbox-dot"></span><?= $opt ?></label>
-          <?php endforeach; ?>
-        </div>
-      </div>
-    </div>
+    $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host     = $_SERVER['HTTP_HOST'] ?? '';
+    $fileUrl  = $protocol . '://' . $host . '/data/uploads/' . $newName;
 
-    <div class="service-tab-content" id="stab-copy">
-      <div class="section-label">Копирование / Распечатка</div>
-      <div class="form-group">
-        <label class="form-label">Формат бумаги</label>
-        <div class="size-matrix">
-          <?php foreach(['А6 (105×148)','А5 (148×210)','А4 (210×297)','А3 (297×420)','А2 (420×594)','А1 (594×841)','А0 (841×1189)','Свой'] as $s): ?>
-          <button class="size-btn" onclick="selectSize(this,'copy')"><?= $s ?></button>
-          <?php endforeach; ?>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Кол-во листов</label><input class="form-input" type="number" id="copy_qty" placeholder="1" min="1" oninput="calcTotal()"></div>
-        <div class="form-group">
-          <label class="form-label">Стороны</label>
-          <select class="form-select" id="copy_sides"><option>Одностороннее</option><option>Двустороннее</option></select>
-        </div>
-        <div class="form-group"><label class="form-label">Цена за лист ₽</label><input class="form-input" type="number" id="copy_price" placeholder="0" oninput="calcTotal()"></div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Параметры</label>
-        <div class="checkbox-group">
-          <?php foreach(['Цветная','Ч/Б','Плотная бумага','Переплёт пружина','Переплёт клей','Ламинация','Степлер','Срочно ×2'] as $opt): ?>
-          <label class="checkbox-item" onclick="toggleCheck(this)"><input type="checkbox"><span class="checkbox-dot"></span><?= $opt ?></label>
-          <?php endforeach; ?>
-        </div>
-      </div>
-    </div>
+    $log->action('FILE_UPLOAD', $origName . ' → ' . $newName);
+    $res->ok([
+        'filename' => $newName,
+        'origName' => $origName,
+        'url'      => $fileUrl,
+        'size'     => $file['size'],
+        'ext'      => $ext,
+    ]);
+}
 
-    <div class="service-tab-content" id="stab-banner">
-      <div class="section-label">Баннерная печать</div>
-      <div class="form-group">
-        <label class="form-label">Стандартные размеры (м)</label>
-        <div class="size-matrix">
-          <?php foreach(['0.5×1','0.6×1.6','1×2','1×3','1×4','1×5','1×10','1.5×3','2×3','2×5','3×6 (Билборд)','4×8','Ситилайт 1.2×1.8','Свой размер'] as $s): ?>
-          <button class="size-btn" onclick="selectSize(this,'banner')"><?= $s ?></button>
-          <?php endforeach; ?>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Ширина (м)</label><input class="form-input" type="number" id="ban_w" placeholder="1.0" step="0.1" oninput="calcBannerArea()"></div>
-        <div class="form-group"><label class="form-label">Высота (м)</label><input class="form-input" type="number" id="ban_h" placeholder="2.0" step="0.1" oninput="calcBannerArea()"></div>
-        <div class="form-group"><label class="form-label">Площадь м²</label><input class="form-input" id="ban_area" readonly style="opacity:0.7;"></div>
-        <div class="form-group"><label class="form-label">Цена за м² ₽</label><input class="form-input" type="number" id="ban_price" placeholder="0" oninput="calcBannerArea()"></div>
-      </div>
-      <div class="form-group"><label class="form-label">Кол-во штук</label><input class="form-input" type="number" id="ban_qty" value="1" min="1" oninput="calcBannerArea()"></div>
-      <div class="form-group">
-        <label class="form-label">Опции</label>
-        <div class="checkbox-group">
-          <?php foreach(['Люверсы','Усиленный кант','Подложка пенокартон','Монтаж','Дизайн макета','Баннерная сетка','Frontlit','Backlit','Срочно'] as $opt): ?>
-          <label class="checkbox-item" onclick="toggleCheck(this)"><input type="checkbox"><span class="checkbox-dot"></span><?= $opt ?></label>
-          <?php endforeach; ?>
-        </div>
-      </div>
-    </div>
+// ════════════════════════════════════════════════════════════
+// HANDLERS — УВЕДОМЛЕНИЯ
+// ════════════════════════════════════════════════════════════
+function handleNotify(array $body, CQLite $db, Response $res, Logger $log): void
+{
+    $event    = $body['event'] ?? 'unknown';
+    $data     = $body['data']  ?? [];
+    $results  = [];
+    $settings = $db->getSettings();
 
-    <div class="service-tab-content" id="stab-design">
-      <div class="section-label">Дизайн и допечатная подготовка</div>
-      <div class="form-group">
-        <label class="form-label">Вид работ</label>
-        <div class="checkbox-group">
-          <?php foreach(['Разработка макета','Правки макета','Логотип','Визитка','Листовка','Буклет','Плакат','Брендбук','Соцсети (пост)','Предпечатная обработка'] as $opt): ?>
-          <label class="checkbox-item" onclick="toggleCheck(this)"><input type="checkbox"><span class="checkbox-dot"></span><?= $opt ?></label>
-          <?php endforeach; ?>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Кол-во правок</label><input class="form-input" type="number" id="des_revisions" value="2"></div>
-        <div class="form-group"><label class="form-label">Стоимость ₽</label><input class="form-input" type="number" id="des_price" placeholder="0" oninput="calcTotal()"></div>
-        <div class="form-group">
-          <label class="form-label">Формат файла</label>
-          <select class="form-select" id="des_format">
-            <option>AI</option><option>CDR</option><option>PSD</option><option>PDF</option><option>PNG</option><option>JPG</option><option>SVG</option>
-          </select>
-        </div>
-      </div>
-    </div>
+    $tgToken  = $settings['tgToken']  ?? '';
+    $tgBossId = $settings['tgBossId'] ?? '';
 
-    <div class="service-tab-content" id="stab-business">
-      <div class="section-label">Бизнес-печать (полиграфия)</div>
-      <div class="form-group">
-        <label class="form-label">Вид продукции</label>
-        <div class="checkbox-group">
-          <?php foreach(['Визитки','Листовки','Буклеты','Брошюры','Каталоги','Плакаты','Наклейки','Бланки','Конверты','Бейджи','Таблички','Самокопирующиеся бланки'] as $opt): ?>
-          <label class="checkbox-item" onclick="toggleCheck(this)"><input type="checkbox"><span class="checkbox-dot"></span><?= $opt ?></label>
-          <?php endforeach; ?>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Тираж (шт.)</label><input class="form-input" type="number" id="biz_qty" placeholder="100" oninput="calcTotal()"></div>
-        <div class="form-group">
-          <label class="form-label">Формат</label>
-          <select class="form-select" id="biz_size">
-            <option>90×50 (Визитка)</option><option>А6</option><option>А5</option><option>А4</option><option>А3</option><option>Евро (99×210)</option><option>Свой</option>
-          </select>
-        </div>
-        <div class="form-group"><label class="form-label">Цена за шт. ₽</label><input class="form-input" type="number" id="biz_price" placeholder="0" oninput="calcTotal()"></div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Дополнительно</label>
-        <div class="checkbox-group">
-          <?php foreach(['Ламинация глянец','Ламинация матовая','Скругление углов','Тиснение','УФ-лак','Перфорация','Биговка','Срочно'] as $opt): ?>
-          <label class="checkbox-item" onclick="toggleCheck(this)"><input type="checkbox"><span class="checkbox-dot"></span><?= $opt ?></label>
-          <?php endforeach; ?>
-        </div>
-      </div>
-    </div>
+    if ($tgToken && $tgBossId) {
+        $text               = buildNotifyText($event, $data, $settings);
+        $tgResult           = sendTelegram($tgToken, $tgBossId, $text);
+        $results['telegram'] = $tgResult;
+        $db->insert('notifications_log', [
+            'channel'   => 'telegram',
+            'event'     => $event,
+            'recipient' => $tgBossId,
+            'payload'   => json_encode($data, JSON_UNESCAPED_UNICODE),
+            'status'    => $tgResult ? 'sent' : 'failed',
+        ]);
+    }
 
-    <div class="service-tab-content" id="stab-wide">
-      <div class="section-label">Широкоформатная печать</div>
-      <div class="form-group">
-        <label class="form-label">Вид продукции</label>
-        <div class="checkbox-group">
-          <?php foreach(['Фотообои','Печать на холсте','Рулонный баннер (Roll-Up)','Стенд Pop-Up','Наклейки (плёнка)','Витражная плёнка','Пенокартон','ПВХ-плата'] as $opt): ?>
-          <label class="checkbox-item" onclick="toggleCheck(this)"><input type="checkbox"><span class="checkbox-dot"></span><?= $opt ?></label>
-          <?php endforeach; ?>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Ширина (см)</label><input class="form-input" type="number" id="wide_w" placeholder="150" oninput="calcWideArea()"></div>
-        <div class="form-group"><label class="form-label">Высота (см)</label><input class="form-input" type="number" id="wide_h" placeholder="200" oninput="calcWideArea()"></div>
-        <div class="form-group"><label class="form-label">Площадь м²</label><input class="form-input" id="wide_area" readonly style="opacity:0.7;"></div>
-        <div class="form-group"><label class="form-label">Цена м² ₽</label><input class="form-input" type="number" id="wide_price" placeholder="0" oninput="calcWideArea()"></div>
-      </div>
-    </div>
+    if (!empty($settings['maxEnabled'])) {
+        $results['max'] = dispatchToMax($event, $data, $settings, $db);
+    }
+    if (!empty($settings['vkEnabled'])) {
+        $results['vk'] = dispatchToVk($event, $data, $settings, $db);
+    }
 
-    <div class="service-tab-content" id="stab-promo">
-      <div class="section-label">Сувенирная продукция</div>
-      <div class="form-group">
-        <label class="form-label">Вид продукции</label>
-        <div class="checkbox-group">
-          <?php foreach(['Кружка с фото','Подушка с фото','Футболка','Холст','Пазл','Фотокнига','Фотомагнит','Брелок','Значок','Пакет с логотипом','Чехол для телефона','Постер'] as $opt): ?>
-          <label class="checkbox-item" onclick="toggleCheck(this)"><input type="checkbox"><span class="checkbox-dot"></span><?= $opt ?></label>
-          <?php endforeach; ?>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Кол-во</label><input class="form-input" type="number" id="promo_qty" value="1" min="1" oninput="calcTotal()"></div>
-        <div class="form-group"><label class="form-label">Цена за шт. ₽</label><input class="form-input" type="number" id="promo_price" placeholder="0" oninput="calcTotal()"></div>
-      </div>
-    </div>
+    $log->action('NOTIFY', $event);
+    $res->ok(['event' => $event, 'results' => $results]);
+}
 
-    <div class="service-tab-content" id="stab-other">
-      <div class="section-label">Прочие услуги</div>
-      <div class="form-group"><label class="form-label">Описание</label><textarea class="form-textarea" id="other_desc" placeholder="Опишите услугу..."></textarea></div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Кол-во</label><input class="form-input" type="number" id="other_qty" value="1" oninput="calcTotal()"></div>
-        <div class="form-group"><label class="form-label">Стоимость ₽</label><input class="form-input" type="number" id="other_price" placeholder="0" oninput="calcTotal()"></div>
-      </div>
-    </div>
+function buildNotifyText(string $event, array $data, array $settings): string
+{
+    $company = $settings['company'] ?? 'PrintCRM';
 
-    <hr class="sep">
+    return match ($event) {
+        'order_new' => sprintf(
+            "📋 <b>Новый заказ %s</b>\n👤 %s\n📞 %s\n🖨 %s\n💰 %s₽\n🏢 %s",
+            $data['num'] ?? '', $data['client'] ?? '', $data['phone'] ?? '—',
+            $data['service_label'] ?? '', $data['total'] ?? 0, $company
+        ),
+        'order_status' => sprintf(
+            "🔄 <b>Заказ %s — статус изменён</b>\n📌 %s\n👤 %s",
+            $data['num'] ?? '',
+            ['new'=>'🆕 Новый','work'=>'⚙️ В работе','ready'=>'✅ Готов','done'=>'📦 Выдан','cancel'=>'❌ Отменён'][$data['status'] ?? ''] ?? ($data['status'] ?? ''),
+            $data['client'] ?? ''
+        ),
+        'order_done' => sprintf(
+            "📦 <b>Заказ %s выдан!</b>\n👤 %s\n💰 %s₽",
+            $data['num'] ?? '', $data['client'] ?? '', $data['total'] ?? 0
+        ),
+        'finance_income' => sprintf(
+            "💰 <b>Доход: %s₽</b>\n📂 %s\n💳 %s",
+            $data['amount'] ?? 0, $data['category'] ?? '', $data['method'] ?? ''
+        ),
+        'finance_expense' => sprintf(
+            "📤 <b>Расход: %s₽</b>\n📂 %s",
+            $data['amount'] ?? 0, $data['category'] ?? ''
+        ),
+        'warehouse_low' => sprintf(
+            "⚠️ <b>Заканчивается на складе</b>\n📦 %s\n📉 Остаток: %s %s",
+            $data['name'] ?? '', $data['qty'] ?? 0, $data['unit'] ?? ''
+        ),
+        'day_summary' => sprintf(
+            "📊 <b>Итог дня — %s</b>\n📋 Заказов: %s (выдано: %s)\n💰 Доход: %s₽\n📤 Расход: %s₽\n📈 Прибыль: %s₽",
+            date('d.m.Y'),
+            $data['orders_count'] ?? 0, $data['orders_done'] ?? 0,
+            $data['income'] ?? 0, $data['expense'] ?? 0,
+            ($data['income'] ?? 0) - ($data['expense'] ?? 0)
+        ),
+        'test'    => "🔔 <b>Тест уведомление</b>\nPrintCRM v" . APP_VERSION . " работает! ✅",
+        default   => "📢 <b>Событие: {$event}</b>\n" . json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT),
+    };
+}
 
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">Категория бизнеса</label>
-        <select class="form-select" id="ord_bizcat">
-          <?php foreach(['Частный клиент','Малый бизнес','Корпоративный','Государственный','Образование','Медицина','Ивент / Мероприятие','Строительство / Недвижимость','Торговля / Ритейл','Общепит / Рестораны','Другое'] as $cat): ?>
-          <option><?= $cat ?></option>
-          <?php endforeach; ?>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Статус</label>
-        <select class="form-select" id="ord_status">
-          <option value="new">🆕 Новый</option>
-          <option value="work">⚙️ В работе</option>
-          <option value="ready">✅ Готов</option>
-          <option value="done">📦 Выдан</option>
-          <option value="cancel">❌ Отменён</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Способ оплаты</label>
-        <select class="form-select" id="ord_payment">
-          <option>Наличные</option><option>Карта</option>
-          <option>Безнал (счёт)</option><option>QR / СБП</option>
-          <option>Предоплата</option><option>В кредит</option>
-        </select>
-      </div>
-    </div>
+function sendTelegram(string $token, string $chatId, string $text): bool
+{
+    $url  = "https://api.telegram.org/bot{$token}/sendMessage";
+    $data = http_build_query([
+        'chat_id'    => $chatId,
+        'text'       => $text,
+        'parse_mode' => 'HTML',
+    ]);
+    $ctx    = stream_context_create(['http' => [
+        'method'  => 'POST',
+        'header'  => 'Content-Type: application/x-www-form-urlencoded',
+        'content' => $data,
+        'timeout' => 5,
+    ]]);
+    $result = @file_get_contents($url, false, $ctx);
+    return $result !== false;
+}
 
-    <div class="form-group">
-      <label class="form-label">Комментарий</label>
-      <textarea class="form-textarea" id="ord_comment" placeholder="Пожелания клиента..."></textarea>
-    </div>
+function dispatchToMax(string $event, array $data, array $settings, CQLite $db): bool
+{
+    $url = $settings['maxWebhookUrl'] ?? '';
+    if (!$url) return false;
 
-    <!-- ИТОГО -->
-    <div style="background:linear-gradient(135deg,rgba(124,58,237,0.15),rgba(6,182,212,0.1));border:1px solid rgba(124,58,237,0.3);border-radius:12px;padding:16px;display:flex;align-items:center;justify-content:space-between;">
-      <div>
-        <div style="font-size:0.8rem;color:var(--text-muted);">ИТОГО К ОПЛАТЕ</div>
-        <div style="font-size:2rem;font-weight:900;color:var(--accent2);" id="ordTotalDisplay">0 ₽</div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <label style="font-size:0.8rem;color:var(--text-muted);">Итоговая сумма ₽</label>
-          <input class="form-input" type="number" id="ord_total" style="width:130px;" placeholder="0" oninput="updateTotalDisplay()">
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <label style="font-size:0.8rem;color:var(--text-muted);">Предоплата ₽</label>
-          <input class="form-input" type="number" id="ord_prepay" style="width:130px;" placeholder="0">
-        </div>
-      </div>
-    </div>
+    $payload = json_encode(['event' => $event, 'data' => $data], JSON_UNESCAPED_UNICODE);
+    $ctx     = stream_context_create(['http' => [
+        'method'  => 'POST',
+        'header'  => "Content-Type: application/json\r\nX-Api-Key: " . ($settings['maxApiKey'] ?? ''),
+        'content' => $payload,
+        'timeout' => 5,
+    ]]);
+    $result  = @file_get_contents($url, false, $ctx);
+    $db->insert('notifications_log', [
+        'channel'   => 'max',
+        'event'     => $event,
+        'recipient' => $data['phone'] ?? '',
+        'payload'   => $payload,
+        'status'    => $result !== false ? 'sent' : 'failed',
+    ]);
+    return $result !== false;
+}
 
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal('orderModal')">Отмена</button>
-      <button class="btn btn-secondary" onclick="printOrderForm('client')">🖨️ Чек клиенту</button>
-      <button class="btn btn-secondary" onclick="printOrderForm('manager')">📋 Бланк менеджера</button>
-      <button class="btn btn-primary"   onclick="saveOrder()">💾 Сохранить заказ</button>
-    </div>
-  </div>
-</div>
+function dispatchToVk(string $event, array $data, array $settings, CQLite $db): bool
+{
+    $url = $settings['vkWebhookUrl'] ?? '';
+    if (!$url) return false;
 
-<!-- INCOME MODAL -->
-<div class="modal-overlay" id="incomeModal">
-  <div class="modal modal-sm">
-    <div class="modal-header">
-      <div class="modal-title">💰 Внести доход</div>
-      <button class="modal-close" onclick="closeModal('incomeModal')">✕</button>
-    </div>
-    <div class="form-group"><label class="form-label">Дата и время</label><input class="form-input" type="datetime-local" id="inc_date"></div>
-    <div class="form-group">
-      <label class="form-label">Категория</label>
-      <select class="form-select" id="inc_cat">
-        <?php foreach(['Фотопечать','Копирование / Распечатка','Баннерная печать','Широкоформатная печать','Дизайн','Бизнес-полиграфия','Сувенирная продукция','Ламинация','Переплёт','Корпоративный заказ','Предоплата','Прочее'] as $c): ?>
-        <option><?= $c ?></option>
-        <?php endforeach; ?>
-      </select>
-    </div>
-    <div class="form-group"><label class="form-label">Описание</label><input class="form-input" id="inc_desc" placeholder="За что получены деньги..."></div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Сумма ₽</label><input class="form-input" type="number" id="inc_amount" placeholder="0"></div>
-      <div class="form-group">
-        <label class="form-label">Способ оплаты</label>
-        <select class="form-select" id="inc_method">
-          <option>Наличные</option><option>Карта</option><option>Безнал</option><option>QR / СБП</option>
-        </select>
-      </div>
-    </div>
-    <div class="form-group"><label class="form-label">Клиент / Источник</label><input class="form-input" id="inc_client" placeholder="(необязательно)"></div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal('incomeModal')">Отмена</button>
-      <button class="btn btn-success"   onclick="saveIncome()">✓ Сохранить доход</button>
-    </div>
-  </div>
-</div>
+    $payload = json_encode(['event' => $event, 'data' => $data], JSON_UNESCAPED_UNICODE);
+    $ctx     = stream_context_create(['http' => [
+        'method'  => 'POST',
+        'header'  => "Content-Type: application/json\r\nX-Api-Key: " . ($settings['vkApiKey'] ?? ''),
+        'content' => $payload,
+        'timeout' => 5,
+    ]]);
+    $result  = @file_get_contents($url, false, $ctx);
+    $db->insert('notifications_log', [
+        'channel'   => 'vk',
+        'event'     => $event,
+        'recipient' => $data['phone'] ?? '',
+        'payload'   => $payload,
+        'status'    => $result !== false ? 'sent' : 'failed',
+    ]);
+    return $result !== false;
+}
 
-<!-- EXPENSE MODAL -->
-<div class="modal-overlay" id="expenseModal">
-  <div class="modal modal-sm">
-    <div class="modal-header">
-      <div class="modal-title">📤 Внести расход</div>
-      <button class="modal-close" onclick="closeModal('expenseModal')">✕</button>
-    </div>
-    <div class="form-group"><label class="form-label">Дата и время</label><input class="form-input" type="datetime-local" id="exp_date"></div>
-    <div class="form-group">
-      <label class="form-label">Категория</label>
-      <select class="form-select" id="exp_cat">
-        <?php foreach(['Расходные материалы (чернила, бумага)','Аренда помещения','Зарплата сотрудникам','Коммунальные услуги','Техобслуживание оборудования','Закупка оборудования','Реклама / Маркетинг','Интернет / Связь','Налоги / Взносы','Транспорт / Доставка','Хоз. нужды','Прочее'] as $c): ?>
-        <option><?= $c ?></option>
-        <?php endforeach; ?>
-      </select>
-    </div>
-    <div class="form-group"><label class="form-label">Описание</label><input class="form-input" id="exp_desc" placeholder="На что потрачено..."></div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Сумма ₽</label><input class="form-input" type="number" id="exp_amount" placeholder="0"></div>
-      <div class="form-group">
-        <label class="form-label">Способ оплаты</label>
-        <select class="form-select" id="exp_method">
-          <option>Наличные</option><option>Карта</option><option>Безнал</option><option>QR / СБП</option>
-        </select>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal('expenseModal')">Отмена</button>
-      <button class="btn btn-danger"    onclick="saveExpense()">✓ Сохранить расход</button>
-    </div>
-  </div>
-</div>
+// ════════════════════════════════════════════════════════════
+// HANDLERS — ВЕБХУКИ (входящие)
+// ════════════════════════════════════════════════════════════
+function handleWebhook(
+    array $path, string $method, array $body,
+    CQLite $db, Response $res, Logger $log
+): void {
+    $channel = $path[1] ?? '';
+    $log->action('WEBHOOK_IN', $channel . ' ' . json_encode($body, JSON_UNESCAPED_UNICODE));
 
-<!-- CLIENT MODAL -->
-<div class="modal-overlay" id="clientModal">
-  <div class="modal modal-sm">
-    <div class="modal-header">
-      <div class="modal-title">👤 <span id="clientModalTitle">Добавить клиента</span></div>
-      <button class="modal-close" onclick="closeModal('clientModal')">✕</button>
-    </div>
-    <input type="hidden" id="cli_edit_id">
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Имя / Название</label><input class="form-input" id="cli_name" placeholder="Иван Иванов / ООО Ромашка"></div>
-      <div class="form-group">
-        <label class="form-label">Тип клиента</label>
-        <select class="form-select" id="cli_type">
-          <option>Физическое лицо</option><option>ИП</option><option>ООО / ЗАО</option><option>Государственная структура</option>
-        </select>
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Телефон</label><input class="form-input" id="cli_phone" placeholder="+7 (999) 000-00-00"></div>
-      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="cli_email"></div>
-    </div>
-    <div class="form-group"><label class="form-label">Адрес / Город</label><input class="form-input" id="cli_address"></div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">ИНН (для юр. лиц)</label><input class="form-input" id="cli_inn"></div>
-      <div class="form-group"><label class="form-label">Скидка %</label><input class="form-input" type="number" id="cli_discount" placeholder="0" min="0" max="100"></div>
-    </div>
-    <div class="form-group"><label class="form-label">Заметки</label><textarea class="form-textarea" id="cli_notes" placeholder="Предпочтения клиента..."></textarea></div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal('clientModal')">Отмена</button>
-      <button class="btn btn-primary"   onclick="saveClient()">💾 Сохранить</button>
-    </div>
-  </div>
-</div>
+    match ($channel) {
 
-<!-- NOTE MODAL -->
-<div class="modal-overlay" id="noteModal">
-  <div class="modal modal-sm">
-    <div class="modal-header">
-      <div class="modal-title">📝 Новая заметка</div>
-      <button class="modal-close" onclick="closeModal('noteModal')">✕</button>
-    </div>
-    <div class="form-group"><label class="form-label">Заголовок</label><input class="form-input" id="note_title" placeholder="Краткий заголовок..."></div>
-    <div class="form-group"><label class="form-label">Текст</label><textarea class="form-textarea" id="note_body" rows="5" placeholder="Важная информация для следующей смены..."></textarea></div>
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">Приоритет</label>
-        <select class="form-select" id="note_priority">
-          <option value="normal">Обычная</option>
-          <option value="info">Информация</option>
-          <option value="important">Важная</option>
-          <option value="urgent">Срочно!</option>
-        </select>
-      </div>
-      <div class="form-group"><label class="form-label">Смена</label><input class="form-input" id="note_shift" placeholder="Имя менеджера"></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal('noteModal')">Отмена</button>
-      <button class="btn btn-primary"   onclick="saveNote()">💾 Сохранить</button>
-    </div>
-  </div>
-</div>
+        'telegram' => (function () use ($body, $db, $res, $log) {
+            $msg    = $body['message'] ?? $body['callback_query']['message'] ?? null;
+            $text   = $msg['text']      ?? '';
+            $chatId = $msg['chat']['id'] ?? null;
 
-<!-- WAREHOUSE ADD MODAL -->
-<div class="modal-overlay" id="warehouseAddModal">
-  <div class="modal modal-sm">
-    <div class="modal-header">
-      <div class="modal-title">📦 Добавить позицию</div>
-      <button class="modal-close" onclick="closeModal('warehouseAddModal')">✕</button>
-    </div>
-    <div class="form-group"><label class="form-label">Наименование</label><input class="form-input" id="wh_name" placeholder="Бумага А4 80г/м²"></div>
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">Категория</label>
-        <select class="form-select" id="wh_cat">
-          <option>Бумага</option><option>Чернила / Тонер</option><option>Баннерные материалы</option>
-          <option>Плёнки и самоклейка</option><option>Переплётные материалы</option>
-          <option>Химия и обслуживание</option><option>Прочее</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Единица</label>
-        <select class="form-select" id="wh_unit">
-          <option>шт</option><option>пачка</option><option>рулон</option>
-          <option>литр</option><option>кг</option><option>м²</option><option>м</option>
-        </select>
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Текущий остаток</label><input class="form-input" type="number" id="wh_qty" placeholder="10"></div>
-      <div class="form-group"><label class="form-label">Минимальный остаток</label><input class="form-input" type="number" id="wh_minqty" placeholder="2"></div>
-    </div>
-    <div class="form-group"><label class="form-label">Цена за единицу ₽</label><input class="form-input" type="number" id="wh_price" placeholder="0"></div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal('warehouseAddModal')">Отмена</button>
-      <button class="btn btn-primary"   onclick="saveWarehouseItem()">💾 Добавить</button>
-    </div>
-  </div>
-</div>
+            if ($text === '/status') {
+                $settings = $db->getSettings();
+                $orders   = $db->count('orders', ['status IN' => ['new','work']]);
+                $today    = date('Y-m-d');
+                $income   = $db->sum('finance', 'amount', ['type' => 'income', 'date LIKE' => $today . '%']);
+                sendTelegram(
+                    $settings['tgToken'] ?? '', (string)$chatId,
+                    "📊 <b>Сводка</b>\n⚙️ Активных заказов: {$orders}\n💰 Доход сегодня: {$income}₽"
+                );
+            }
+            $res->ok(['ok' => true]);
+        })(),
 
-<!-- WAREHOUSE ACTION MODAL -->
-<div class="modal-overlay" id="warehouseActionModal">
-  <div class="modal modal-sm">
-    <div class="modal-header">
-      <div class="modal-title" id="whActionTitle">Операция со складом</div>
-      <button class="modal-close" onclick="closeModal('warehouseActionModal')">✕</button>
-    </div>
-    <div style="padding:12px;background:var(--bg-dark);border-radius:10px;margin-bottom:16px;">
-      <div style="font-weight:700;" id="whActionItemName">—</div>
-      <div class="text-xs text-muted">Текущий остаток: <span id="whActionCurrentQty">0</span></div>
-    </div>
-    <div class="form-group"><label class="form-label">Количество</label><input class="form-input" type="number" id="wh_action_qty" placeholder="1" min="0.1" step="0.1"></div>
-    <input type="hidden" id="wh_action_id">
-    <input type="hidden" id="wh_action_type">
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal('warehouseActionModal')">Отмена</button>
-      <button class="btn btn-primary"   onclick="executeWarehouseAction()">✓ Выполнить</button>
-    </div>
-  </div>
-</div>
+        'vk' => (function () use ($body, $db, $res, $log) {
+            if (($body['type'] ?? '') === 'confirmation') {
+                $settings = $db->getSettings();
+                echo $settings['vkConfirmCode'] ?? 'ok';
+                exit();
+            }
+            if (($body['type'] ?? '') === 'message_new') {
+                $msg    = $body['object']['message'] ?? [];
+                $text   = $msg['text']     ?? '';
+                $peerId = $msg['peer_id']  ?? $msg['from_id'] ?? null;
+                $log->action('VK_MSG', "от {$peerId}: {$text}");
+            }
+            $res->raw('ok');
+        })(),
 
-<!-- STAFF MODAL -->
-<div class="modal-overlay" id="staffAddModal">
-  <div class="modal modal-sm">
-    <div class="modal-header">
-      <div class="modal-title">👤 Добавить сотрудника</div>
-      <button class="modal-close" onclick="closeModal('staffAddModal')">✕</button>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Имя</label><input class="form-input" id="st_name" placeholder="Иван Иванов"></div>
-      <div class="form-group">
-        <label class="form-label">Должность</label>
-        <select class="form-select" id="st_role">
-          <option>Менеджер</option><option>Оператор печати</option><option>Дизайнер</option><option>Директор</option><option>Кассир</option>
-        </select>
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Телефон</label><input class="form-input" id="st_phone"></div>
-      <div class="form-group">
-        <label class="form-label">PIN (4 цифры)</label>
-        <input class="form-input" id="st_pin" type="password" placeholder="****" maxlength="4">
-        <div class="form-hint">🔐 Для входа в систему</div>
-      </div>
-    </div>
-    <div class="form-group">
-      <label class="form-label">Цвет в календаре</label>
-      <input type="color" id="st_color" value="#7c3aed" style="width:60px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--bg-dark);cursor:pointer;">
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal('staffAddModal')">Отмена</button>
-      <button class="btn btn-primary"   onclick="saveStaff()">💾 Добавить</button>
-    </div>
-  </div>
-</div>
+        'max' => (function () use ($body, $db, $res, $log) {
+            $event = $body['event'] ?? '';
+            $data  = $body['data']  ?? [];
+            $log->action('MAX_EVENT', $event);
+            if ($event === 'new_order') {
+                $db->insert('weborders', [
+                    'id'      => CQLite::uid('wo'),
+                    'source'  => 'max',
+                    'client'  => $data['client']  ?? '',
+                    'phone'   => $data['phone']   ?? '',
+                    'message' => $data['message'] ?? '',
+                    'status'  => 'new',
+                    'raw'     => json_encode($data, JSON_UNESCAPED_UNICODE),
+                ]);
+            }
+            $res->ok(['ok' => true]);
+        })(),
 
-<!-- CALENDAR EVENT MODAL -->
-<div class="modal-overlay" id="calEventModal">
-  <div class="modal modal-sm">
-    <div class="modal-header">
-      <div class="modal-title">📅 Новая задача</div>
-      <button class="modal-close" onclick="closeModal('calEventModal')">✕</button>
-    </div>
-    <div class="form-group"><label class="form-label">Заголовок</label><input class="form-input" id="cal_title" placeholder="Текст задачи..."></div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Дата</label><input class="form-input" type="date" id="cal_date"></div>
-      <div class="form-group"><label class="form-label">Время</label><input class="form-input" type="time" id="cal_time"></div>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">Тип</label>
-        <select class="form-select" id="cal_type">
-          <option value="task">Задача</option>
-          <option value="deadline">Дедлайн</option>
-          <option value="meeting">Встреча</option>
-          <option value="delivery">Доставка</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Цвет</label>
-        <input type="color" id="cal_color" value="#7c3aed" style="width:60px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--bg-dark);cursor:pointer;">
-      </div>
-    </div>
-    <div class="form-group"><label class="form-label">Заметка</label><textarea class="form-textarea" id="cal_note" rows="2"></textarea></div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal('calEventModal')">Отмена</button>
-      <button class="btn btn-primary"   onclick="saveCalEvent()">💾 Сохранить</button>
-    </div>
-  </div>
-</div>
+        'ozon_acquiring' => (function () use ($body, $db, $res, $log) {
+            $orderId = $body['order_id'] ?? null;
+            $status  = $body['status']   ?? '';
+            $amount  = (float)($body['amount'] ?? 0);
+            if ($orderId && ($status === 'succeeded' || $status === 'paid')) {
+                $db->update('orders', ['payment_status' => 'paid'], ['id' => $orderId]);
+                $db->insert('finance', [
+                    'id'          => CQLite::uid('fin'),
+                    'type'        => 'income',
+                    'category'    => 'Эквайринг Ozon',
+                    'description' => 'Оплата по заказу #' . $orderId,
+                    'amount'      => $amount,
+                    'method'      => 'Карта (эквайринг)',
+                    'order_id'    => $orderId,
+                    'date'        => date('Y-m-d H:i:s'),
+                ]);
+                $log->action('OZON_PAYMENT', 'order:' . $orderId . ' +' . $amount . '₽');
+            }
+            $res->ok(['ok' => true]);
+        })(),
 
-<!-- ORDER DETAIL OVERLAY -->
-<div class="order-detail-overlay" id="orderDetailOverlay">
-  <div class="order-detail-modal" id="orderDetailModal">
-    <div class="od-header">
-      <div class="od-icon-wrap" id="odIconWrap" style="background:linear-gradient(135deg,rgba(124,58,237,0.3),rgba(6,182,212,0.2));">📋</div>
-      <div class="od-titles">
-        <div class="od-order-num" id="odOrderNum">—</div>
-        <div class="od-client-name" id="odClientName">—</div>
-        <div class="od-sub" id="odSub">—</div>
-      </div>
-      <button class="od-close" onclick="closeOrderDetail()">✕</button>
-    </div>
-    <div class="od-body">
-      <div class="od-status-bar" id="odStatusBar"></div>
-      <div class="od-grid" id="odInfoGrid"></div>
-      <div id="odComment"></div>
-      <div id="odParams"></div>
-    </div>
-    <div class="od-actions" id="odActions"></div>
-  </div>
-</div>
+        'weborders' => (function () use ($body, $db, $res, $log) {
+            $row = [
+                'id'      => CQLite::uid('wo'),
+                'source'  => $body['source']  ?? 'website',
+                'client'  => $body['client']  ?? $body['name']    ?? '',
+                'phone'   => $body['phone']   ?? '',
+                'email'   => $body['email']   ?? '',
+                'message' => $body['message'] ?? $body['comment'] ?? '',
+                'service' => $body['service'] ?? '',
+                'status'  => 'new',
+                'raw'     => json_encode($body, JSON_UNESCAPED_UNICODE),
+            ];
+            $db->insert('weborders', $row);
+            $log->action('WEBORDER_IN', $row['client'] . ' — ' . $row['service']);
+            $settings = $db->getSettings();
+            if (!empty($settings['tgToken']) && !empty($settings['tgBossId'])) {
+                sendTelegram(
+                    $settings['tgToken'], $settings['tgBossId'],
+                    "🌐 <b>Новый заказ с сайта</b>\n👤 {$row['client']}\n📞 {$row['phone']}\n💬 {$row['message']}"
+                );
+            }
+            $res->ok(['ok' => true, 'id' => $row['id']]);
+        })(),
 
-<!-- PRINT AREA -->
-<div id="printArea" style="display:none;"></div>
+        default => $res->notFound('webhook/' . $channel),
+    };
+}
 
-<!-- ─── SCRIPTS ───────────────────────────────────────────── -->
-<script src="js/app.js"></script>
-<script src="js/modules.js"></script>
+// ════════════════════════════════════════════════════════════
+// HANDLERS — POS ТЕРМИНАЛЫ
+// ════════════════════════════════════════════════════════════
+function handlePosPayment(array $body, CQLite $db, Response $res, Logger $log): void
+{
+    $provider = $body['provider'] ?? 'sberbank';
+    $amount   = (float)($body['amount'] ?? 0);
+    $orderId  = $body['order_id'] ?? null;
 
-</body>
-</html>
+    if ($amount <= 0) { $res->badRequest('Нет суммы'); return; }
+
+    $settings = $db->getSettings();
+
+    $result = match ($provider) {
+        'sberbank' => [
+            'status'      => 'pending',
+            'provider'    => 'sberbank',
+            'description' => 'Интеграция Сбербанк — настройте в разделе Интеграции',
+            'endpoint'    => '/api/pos/callback',
+        ],
+        'tinkoff' => [
+            'status'      => 'pending',
+            'provider'    => 'tinkoff',
+            'description' => 'Интеграция Тинькофф — настройте в разделе Интеграции',
+            'endpoint'    => '/api/pos/callback',
+        ],
+        'ozon' => (function () use ($body, $amount, $orderId, $settings, $db, $log) {
+            $apiUrl    = $settings['acquiring_api_url']    ?? 'https://payapi.ozon.ru';
+            $accessKey = $settings['acquiring_access_key'] ?? '';
+            $secretKey = $settings['acquiring_secret_key'] ?? '';
+
+            if (!$accessKey || !$secretKey) {
+                return ['status' => 'error', 'error' => 'Не настроены ключи Ozon Acquiring'];
+            }
+            $payload   = json_encode([
+                'amount'       => (int)($amount * 100),
+                'currency'     => 'RUB',
+                'order_id'     => $orderId ?? CQLite::uid('pay'),
+                'description'  => $body['description'] ?? 'Оплата заказа',
+                'success_url'  => $settings['acquiring_success_url'] ?? '',
+                'fail_url'     => $settings['acquiring_fail_url']    ?? '',
+                'notify_url'   => $settings['acquiring_notify_url']  ?? '',
+            ]);
+            $signature = hash_hmac('sha256', $payload, $secretKey);
+            $ctx       = stream_context_create(['http' => [
+                'method'  => 'POST',
+                'header'  => "Content-Type: application/json\r\nX-Access-Key: {$accessKey}\r\nX-Signature: {$signature}",
+                'content' => $payload,
+                'timeout' => 10,
+            ]]);
+            $result    = @file_get_contents("{$apiUrl}/v1/payment/create", false, $ctx);
+            if (!$result) return ['status' => 'error', 'error' => 'Ozon API недоступен'];
+            $data = json_decode($result, true);
+            $log->action('POS_OZON', 'order:' . $orderId . ' amount:' . $amount);
+            return $data ?? ['status' => 'error', 'error' => 'Неверный ответ'];
+        })(),
+        'sbp' => [
+            'status'      => 'pending',
+            'provider'    => 'sbp',
+            'qr_type'     => 'static',
+            'description' => 'Интеграция СБП — настройте в разделе Интеграции',
+            'endpoint'    => '/api/pos/callback',
+        ],
+        default => ['status' => 'error', 'error' => 'Неизвестный провайдер: ' . $provider],
+    };
+
+    $res->ok($result);
+}
+
+function handlePosStatus(array $params, CQLite $db, Response $res): void
+{
+    $paymentId = $params['payment_id'] ?? null;
+    if (!$paymentId) { $res->badRequest('Нет payment_id'); return; }
+
+    $res->ok([
+        'payment_id' => $paymentId,
+        'status'     => 'pending',
+        'message'    => 'Проверьте статус через панель провайдера',
+    ]);
+}
+
+function handlePosCallback(array $body, CQLite $db, Response $res, Logger $log): void
+{
+    $provider = $body['provider'] ?? 'unknown';
+    $orderId  = $body['order_id'] ?? null;
+    $status   = $body['status']   ?? '';
+    $amount   = (float)($body['amount'] ?? 0);
+
+    $log->action('POS_CALLBACK', "{$provider} order:{$orderId} status:{$status}");
+
+    if ($status === 'succeeded' || $status === 'paid') {
+        if ($orderId) {
+            $db->update('orders', ['payment_status' => 'paid'], ['id' => $orderId]);
+        }
+        $db->insert('finance', [
+            'id'          => CQLite::uid('fin'),
+            'type'        => 'income',
+            'category'    => 'POS ' . $provider,
+            'description' => "Оплата через {$provider}" . ($orderId ? " #{$orderId}" : ''),
+            'amount'      => $amount,
+            'method'      => 'Карта (POS)',
+            'order_id'    => $orderId,
+            'date'        => date('Y-m-d H:i:s'),
+        ]);
+    }
+    $res->ok(['ok' => true]);
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — ИНТЕГРАЦИИ
+// ════════════════════════════════════════════════════════════
+function handleIntegrations(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res, Logger $log
+): void {
+    switch ($method) {
+
+        case 'GET':
+            $rows = $db->select('integrations', [], ['order' => 'name ASC']);
+            $rows = array_map(function ($r) {
+                if (isset($r['config'])) {
+                    $r['config'] = json_decode($r['config'], true) ?? [];
+                }
+                return $r;
+            }, $rows);
+            $res->ok(['data' => $rows]);
+            break;
+
+        case 'POST':
+            if ($id) {
+                $update = [];
+                if (isset($body['config']))    $update['config']    = json_encode($body['config'], JSON_UNESCAPED_UNICODE);
+                if (isset($body['is_active'])) $update['is_active'] = (int)$body['is_active'];
+                if (isset($body['name']))      $update['name']      = $body['name'];
+                $db->update('integrations', $update, ['id' => $id]);
+                $log->action('INTEGRATION_UPDATE', $id);
+                $res->ok(['updated' => $id]);
+            } else {
+                $row = [
+                    'id'        => CQLite::uid('int'),
+                    'name'      => $body['name']      ?? '',
+                    'type'      => $body['type']      ?? '',
+                    'config'    => json_encode($body['config'] ?? [], JSON_UNESCAPED_UNICODE),
+                    'is_active' => (int)($body['is_active'] ?? 0),
+                ];
+                $db->insert('integrations', $row);
+                $log->action('INTEGRATION_ADD', $row['name']);
+                $res->ok(['data' => $row, 'id' => $row['id']]);
+            }
+            break;
+
+        case 'DELETE':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->delete('integrations', ['id' => $id]);
+            $res->ok(['deleted' => $id]);
+            break;
+
+        default:
+            $res->methodNotAllowed();
+    }
+}
+
+function handleIntegrationTest(array $body, CQLite $db, Response $res, Logger $log): void
+{
+    $id   = $body['id']   ?? null;
+    $type = $body['type'] ?? null;
+
+    if (!$id && !$type) { $res->badRequest('Нет ID или type'); return; }
+
+    $integration = $id ? $db->selectOne('integrations', ['id' => $id]) : null;
+    $type        = $type ?? ($integration['type'] ?? '');
+    $config      = $integration ? json_decode($integration['config'] ?? '{}', true) : [];
+
+    $result = match ($type) {
+        'telegram' => (function () use ($db) {
+            $s  = $db->getSettings();
+            $ok = sendTelegram($s['tgToken'] ?? '', $s['tgBossId'] ?? '', '🧪 Тест соединения PrintCRM v' . APP_VERSION);
+            return ['ok' => $ok, 'message' => $ok ? 'Telegram работает' : 'Ошибка Telegram'];
+        })(),
+        'ping'    => ['ok' => true, 'message' => 'Сервер отвечает', 'time' => date('Y-m-d H:i:s')],
+        default   => ['ok' => false, 'message' => 'Тест для ' . $type . ' не реализован'],
+    };
+
+    $log->action('INTEGRATION_TEST', $type . ' ok:' . ($result['ok'] ? '1' : '0'));
+    $res->ok($result);
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — МОДУЛИ (динамические PHP)
+// ════════════════════════════════════════════════════════════
+function handleModule(
+    string $method, array $body, array $params,
+    CQLite $db, Response $res, Logger $log
+): void {
+    $moduleId = preg_replace('/[^a-z0-9_]/', '', strtolower($params['module'] ?? $body['module'] ?? ''));
+    $action   = $params['action'] ?? $body['action'] ?? '';
+
+    if (!$moduleId) { $res->badRequest('Нет module'); return; }
+
+    if ($action === '__getjs__') {
+        $file = MODULES_DIR . '/' . $moduleId . '.php';
+        if (!file_exists($file)) { http_response_code(404); echo ''; exit(); }
+        $content = file_get_contents($file);
+        $pos     = strpos($content, '</php>');
+        header('Content-Type: text/html; charset=utf-8');
+        echo $pos !== false ? substr($content, $pos) : '';
+        exit();
+    }
+
+    $moduleFile = MODULES_DIR . '/' . $moduleId . '.php';
+    if (!file_exists($moduleFile)) {
+        $res->notFound('Модуль ' . $moduleId);
+        return;
+    }
+
+    $moduleDB     = $db;
+    $moduleAction = $action;
+    $moduleBody   = $body;
+    $moduleParams = $params;
+
+    ob_start();
+    require $moduleFile;
+    $output = ob_get_clean();
+
+    $jsMarker  = strpos($output, '</php>');
+    $jsonPart  = trim($jsMarker !== false ? substr($output, 0, $jsMarker) : $output);
+
+    echo $jsonPart ?: json_encode(['ok' => true, 'data' => null]);
+}
+
+function handleRegistry(Response $res): void
+{
+    $modules = [];
+    $files   = glob(MODULES_DIR . '/*.php') ?: [];
+
+    foreach ($files as $file) {
+        $lines = array_slice(file($file), 0, 30);
+        $meta  = [
+            'id'          => str_replace('.php', '', basename($file)),
+            'name'        => '',
+            'icon'        => '🧩',
+            'description' => '',
+            'version'     => '1.0',
+            'sidebar'     => true,
+            'color'       => '#7c3aed',
+        ];
+        foreach ($lines as $line) {
+            if (preg_match('/@name\s+(.+)/',        $line, $m)) $meta['name']        = trim($m[1]);
+            if (preg_match('/@icon\s+(.+)/',        $line, $m)) $meta['icon']        = trim($m[1]);
+            if (preg_match('/@description\s+(.+)/', $line, $m)) $meta['description'] = trim($m[1]);
+            if (preg_match('/@version\s+(.+)/',     $line, $m)) $meta['version']     = trim($m[1]);
+            if (preg_match('/@sidebar\s+(.+)/',     $line, $m)) $meta['sidebar']     = trim($m[1]) === 'true';
+            if (preg_match('/@color\s+(.+)/',       $line, $m)) $meta['color']       = trim($m[1]);
+        }
+        if (!$meta['name']) $meta['name'] = ucfirst($meta['id']);
+        $modules[] = $meta;
+    }
+    $res->ok(['modules' => $modules]);
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — ВЕБ-ЗАКАЗЫ
+// ════════════════════════════════════════════════════════════
+function handleWebOrders(
+    string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res, Logger $log
+): void {
+    switch ($method) {
+
+        case 'GET':
+            $where = [];
+            if (!empty($params['status'])) $where['status'] = $params['status'];
+            $rows = $db->select('weborders', $where, ['order' => 'created_at DESC', 'limit' => 100]);
+            $res->ok(['data' => $rows]);
+            break;
+
+        case 'DELETE':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->delete('weborders', ['id' => $id]);
+            $res->ok(['deleted' => $id]);
+            break;
+
+        default:
+            $res->methodNotAllowed();
+    }
+}
+
+function handleWebOrderAccept(array $body, CQLite $db, Response $res, Logger $log): void
+{
+    $id = $body['id'] ?? null;
+    if (!$id) { $res->badRequest('Нет ID'); return; }
+
+    $wo = $db->selectOne('weborders', ['id' => $id]);
+    if (!$wo) { $res->notFound('Веб-заказ ' . $id); return; }
+
+    $orderRow = [
+        'id'            => CQLite::uid('ord'),
+        'num'           => autoOrderNum($db),
+        'client'        => $wo['client'],
+        'phone'         => $wo['phone']   ?? '',
+        'service'       => $wo['service'] ?? 'other',
+        'service_label' => $wo['service'] ?? 'Прочее',
+        'comment'       => $wo['message'] ?? '',
+        'status'        => 'new',
+        'payment'       => 'Наличные',
+        'total'         => 0,
+        'prepay'        => 0,
+        'created_at'    => date('Y-m-d H:i:s'),
+        'files'         => '[]',
+        'options'       => '[]',
+        'extra'         => json_encode(['source' => $wo['source'] ?? 'website']),
+    ];
+    $db->insert('orders', $orderRow);
+    $db->update('weborders', ['status' => 'accepted'], ['id' => $id]);
+    autoCreateClient($wo['client'], $wo['phone'] ?? '', $db);
+
+    $log->action('WEBORDER_ACCEPT', $wo['client'] . ' → ' . $orderRow['num']);
+    $res->ok(['data' => decodeOrderRow($orderRow), 'order_num' => $orderRow['num']]);
+}
+
+function handleWebOrderReject(array $body, CQLite $db, Response $res, Logger $log): void
+{
+    $id = $body['id'] ?? null;
+    if (!$id) { $res->badRequest('Нет ID'); return; }
+    $db->update('weborders', ['status' => 'rejected'], ['id' => $id]);
+    $log->action('WEBORDER_REJECT', 'ID: ' . $id);
+    $res->ok(['rejected' => $id]);
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — АНАЛИТИКА
+// ════════════════════════════════════════════════════════════
+function handleAnalytics(array $params, CQLite $db, Response $res): void
+{
+    $from = $params['from'] ?? date('Y-m-01');
+    $to   = $params['to']   ?? date('Y-m-d');
+
+    $dailyIncome = $db->query(
+        'SELECT DATE(date) as day, SUM(amount) as total
+         FROM finance WHERE type = "income" AND DATE(date) BETWEEN ? AND ?
+         GROUP BY day ORDER BY day',
+        [$from, $to]
+    );
+    $byService = $db->query(
+        'SELECT service_label, COUNT(*) as cnt, SUM(total) as revenue
+         FROM orders WHERE DATE(created_at) BETWEEN ? AND ?
+         GROUP BY service_label ORDER BY revenue DESC',
+        [$from, $to]
+    );
+    $statusStats = $db->query(
+        'SELECT status, COUNT(*) as cnt
+         FROM orders WHERE DATE(created_at) BETWEEN ? AND ?
+         GROUP BY status',
+        [$from, $to]
+    );
+    $topClients = $db->query(
+        'SELECT client, COUNT(*) as orders, SUM(total) as revenue
+         FROM orders WHERE DATE(created_at) BETWEEN ? AND ? AND client != ""
+         GROUP BY client ORDER BY revenue DESC LIMIT 10',
+        [$from, $to]
+    );
+
+    $res->ok([
+        'period'       => ['from' => $from, 'to' => $to],
+        'daily_income' => $dailyIncome,
+        'by_service'   => $byService,
+        'by_status'    => $statusStats,
+        'top_clients'  => $topClients,
+    ]);
+}
+
+function handleAnalyticsExport(array $params, CQLite $db, Response $res): void
+{
+    $format  = $params['format'] ?? 'json';
+    $from    = $params['from']   ?? date('Y-m-01');
+    $to      = $params['to']     ?? date('Y-m-d');
+    $orders  = $db->query('SELECT * FROM orders  WHERE DATE(created_at) BETWEEN ? AND ?', [$from, $to]);
+    $finance = $db->query('SELECT * FROM finance WHERE DATE(date)       BETWEEN ? AND ?', [$from, $to]);
+
+    if ($format === 'csv') {
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="printcrm_export_' . date('Y-m-d') . '.csv"');
+        $out = fopen('php://output', 'w');
+        fprintf($out, chr(0xEF) . chr(0xBB) . chr(0xBF));
+        fputcsv($out, ['=== ЗАКАЗЫ ===']);
+        if ($orders) {
+            fputcsv($out, array_keys($orders[0]));
+            foreach ($orders as $row) fputcsv($out, $row);
+        }
+        fputcsv($out, []);
+        fputcsv($out, ['=== ФИНАНСЫ ===']);
+        if ($finance) {
+            fputcsv($out, array_keys($finance[0]));
+            foreach ($finance as $row) fputcsv($out, $row);
+        }
+        fclose($out);
+        exit();
+    }
+
+    $res->ok([
+        'orders'  => array_map('decodeOrderRow', $orders),
+        'finance' => $finance,
+        'period'  => ['from' => $from, 'to' => $to],
+    ]);
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — ПРОЧИЕ МОДУЛИ
+// ════════════════════════════════════════════════════════════
+function handleBriefs(string $m, array $b, array $p, ?string $id, CQLite $db, Response $res, Logger $log): void
+{
+    handleGenericCRUD('briefs', $m, $b, $p, $id, $db, $res, $log,
+        ['client','staff','service','content','status'],
+        ['id' => CQLite::uid('br'), 'status' => 'draft']
+    );
+}
+
+function handleChecklists(string $m, array $b, array $p, ?string $id, CQLite $db, Response $res): void
+{
+    handleGenericCRUD('checklists', $m, $b, $p, $id, $db, $res, new Logger($db),
+        ['name','items','order_id','completed','staff'],
+        ['id' => CQLite::uid('cl')]
+    );
+}
+
+// FIX: таблица checklist_templates может не существовать — fallback на пустой массив
+function handleChecklistTemplates(string $m, array $b, array $p, ?string $id, CQLite $db, Response $res): void
+{
+    try {
+        $rows = $db->select('checklist_templates', [], ['order' => 'name ASC']);
+    } catch (Throwable) {
+        $rows = [];
+    }
+    $res->ok(['data' => $rows]);
+}
+
+function handlePricelist(string $m, array $b, array $p, ?string $id, CQLite $db, Response $res): void
+{
+    handleGenericCRUD('pricelist', $m, $b, $p, $id, $db, $res, new Logger($db),
+        ['service','name','unit','price_from','price_to','description'],
+        ['id' => CQLite::uid('pr')]
+    );
+}
+
+function handleTemplates(string $m, array $b, array $p, ?string $id, CQLite $db, Response $res): void
+{
+    handleGenericCRUD('doc_templates', $m, $b, $p, $id, $db, $res, new Logger($db),
+        ['name','type','content','variables'],
+        ['id' => CQLite::uid('tpl')]
+    );
+}
+
+function handleSchedule(string $m, array $b, array $p, ?string $id, CQLite $db, Response $res): void
+{
+    handleGenericCRUD('schedule', $m, $b, $p, $id, $db, $res, new Logger($db),
+        ['staff_id','staff_name','date','shift_start','shift_end','notes'],
+        ['id' => CQLite::uid('sch')]
+    );
+}
+
+function handleLayouts(string $m, array $b, array $p, ?string $id, CQLite $db, Response $res): void
+{
+    handleGenericCRUD('layouts', $m, $b, $p, $id, $db, $res, new Logger($db),
+        ['name','order_id','file_url','status','comment'],
+        ['id' => CQLite::uid('lay'), 'status' => 'pending']
+    );
+}
+
+function handleTimer(string $m, array $b, array $p, CQLite $db, Response $res): void
+{
+    if ($m === 'GET') {
+        try {
+            $rows = $db->select('timers', [], ['order' => 'created_at DESC', 'limit' => 20]);
+        } catch (Throwable) {
+            $rows = [];
+        }
+        $res->ok(['data' => $rows]);
+    } else {
+        $res->methodNotAllowed();
+    }
+}
+
+function handleTimerStart(array $b, CQLite $db, Response $res): void
+{
+    $row = [
+        'id'         => CQLite::uid('tmr'),
+        'name'       => $b['name']     ?? '',
+        'order_id'   => $b['order_id'] ?? null,
+        'started_at' => date('Y-m-d H:i:s'),
+        'status'     => 'running',
+    ];
+    $db->insert('timers', $row);
+    $res->ok(['data' => $row]);
+}
+
+function handleTimerStop(array $b, CQLite $db, Response $res): void
+{
+    $id = $b['id'] ?? null;
+    if (!$id) { $res->badRequest('Нет ID'); return; }
+    $timer = $db->selectOne('timers', ['id' => $id]);
+    if (!$timer) { $res->notFound('Таймер'); return; }
+    $seconds = time() - strtotime($timer['started_at']);
+    $db->update('timers', [
+        'status'       => 'stopped',
+        'stopped_at'   => date('Y-m-d H:i:s'),
+        'duration_sec' => $seconds,
+    ], ['id' => $id]);
+    $res->ok(['duration_sec' => $seconds, 'duration' => gmdate('H:i:s', $seconds)]);
+}
+
+function handleQueue(string $m, array $b, array $p, ?string $id, CQLite $db, Response $res): void
+{
+    handleGenericCRUD('queue', $m, $b, $p, $id, $db, $res, new Logger($db),
+        ['client','phone','service','status','position','comment'],
+        ['id' => CQLite::uid('q'), 'status' => 'waiting']
+    );
+}
+
+// FIX: selectOne без третьего аргумента
+function handleQueueNext(CQLite $db, Response $res): void
+{
+    $next = $db->query(
+        'SELECT * FROM queue WHERE status = "waiting" ORDER BY created_at ASC LIMIT 1'
+    );
+    $next = $next[0] ?? null;
+    if (!$next) { $res->ok(['data' => null, 'message' => 'Очередь пуста']); return; }
+    $db->update('queue', ['status' => 'serving'], ['id' => $next['id']]);
+    $res->ok(['data' => $next]);
+}
+
+function handleSavings(string $m, array $b, array $p, ?string $id, CQLite $db, Response $res): void
+{
+    handleGenericCRUD('savings', $m, $b, $p, $id, $db, $res, new Logger($db),
+        ['name','amount','goal','description'],
+        ['id' => CQLite::uid('sav')]
+    );
+}
+
+function handleDelivery(string $m, array $b, array $p, ?string $id, CQLite $db, Response $res, Logger $log): void
+{
+    handleGenericCRUD('delivery', $m, $b, $p, $id, $db, $res, $log,
+        ['order_id','client','phone','address','status','courier','scheduled_at','notes'],
+        ['id' => CQLite::uid('del'), 'status' => 'pending']
+    );
+}
+
+function handleSizeguide(string $m, array $b, array $p, CQLite $db, Response $res): void
+{
+    if ($m === 'GET') {
+        try {
+            $rows = $db->select('sizeguide', [], ['order' => 'service ASC, name ASC']);
+        } catch (Throwable) {
+            $rows = [];
+        }
+        $res->ok(['data' => $rows]);
+    } elseif ($m === 'POST') {
+        $row = [
+            'id'      => CQLite::uid('sz'),
+            'service' => $b['service'] ?? '',
+            'name'    => $b['name']    ?? '',
+            'width'   => (float)($b['width']  ?? 0),
+            'height'  => (float)($b['height'] ?? 0),
+            'unit'    => $b['unit']    ?? 'мм',
+            'notes'   => $b['notes']   ?? '',
+        ];
+        $db->insert('sizeguide', $row);
+        $res->ok(['data' => $row]);
+    } else {
+        $res->methodNotAllowed();
+    }
+}
+
+function handleStamps(string $m, array $b, array $p, ?string $id, CQLite $db, Response $res): void
+{
+    handleGenericCRUD('stamps', $m, $b, $p, $id, $db, $res, new Logger($db),
+        ['name','type','order_id','file_url','parameters'],
+        ['id' => CQLite::uid('stmp')]
+    );
+}
+
+function handleDocParse(Response $res): void
+{
+    $res->ok([
+        'status'    => 'stub',
+        'message'   => 'Парсер документов будет доступен на VPS',
+        'supported' => ['pdf','docx','xlsx','jpg','png'],
+        'features'  => [
+            'pdf_info'    => 'Метаданные PDF (страниц, размер, DPI)',
+            'image_info'  => 'Размер и DPI изображения',
+            'price_parse' => 'Парсинг Excel прайс-листа',
+            'ocr'         => 'OCR текста (будет на VPS)',
+        ],
+    ]);
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — БД
+// ════════════════════════════════════════════════════════════
+function handleDbInfo(CQLite $db, Response $res): void
+{
+    $size   = $db->getDbSize();
+    $tables = $db->getTables();
+    $counts = [];
+    foreach ($tables as $table) {
+        try { $counts[$table] = $db->count($table); } catch (Throwable) { $counts[$table] = 0; }
+    }
+    $res->ok([
+        'version'    => APP_VERSION,
+        'size_kb'    => $size['kb'],
+        'size_mb'    => $size['mb'],
+        'tables'     => $counts,
+        'updated_at' => date('Y-m-d H:i:s'),
+    ]);
+}
+
+function handleDbClear(CQLite $db, Response $res, Logger $log): void
+{
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') { $res->methodNotAllowed(); return; }
+
+    $tables = ['orders','finance','clients','notes','warehouse','warehouse_movements',
+               'cal_events','shifts','salary','debts','notifications_log','api_log',
+               'weborders','staff_log'];
+    $db->transaction(function () use ($tables, $db) {
+        foreach ($tables as $table) {
+            try { $db->execute("DELETE FROM {$table}"); } catch (Throwable) {}
+        }
+    });
+    $log->action('DB_CLEAR', 'Все таблицы очищены');
+    $res->ok(['message' => 'База данных очищена']);
+}
+
+function handleImport(array $body, CQLite $db, Response $res, Logger $log): void
+{
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') { $res->methodNotAllowed(); return; }
+
+    $imported = ['orders' => 0, 'finance' => 0, 'clients' => 0];
+
+    $db->transaction(function () use ($body, $db, &$imported) {
+
+        if (!empty($body['orders']) && is_array($body['orders'])) {
+            foreach ($body['orders'] as $o) {
+                if (empty($o['id'])) continue;
+                if (!$db->selectOne('orders', ['id' => (string)$o['id']])) {
+                    $db->insert('orders', [
+                        'id'            => (string)$o['id'],
+                        'num'           => $o['num']           ?? '',
+                        'client'        => $o['client']        ?? '',
+                        'phone'         => $o['phone']         ?? '',
+                        'manager'       => $o['manager']       ?? '',
+                        'service'       => $o['service']       ?? 'other',
+                        'service_label' => $o['serviceLabel']  ?? $o['service_label'] ?? '',
+                        'size'          => $o['size']          ?? '',
+                        'status'        => $o['status']        ?? 'done',
+                        'payment'       => $o['payment']       ?? 'Наличные',
+                        'total'         => (float)($o['total']  ?? 0),
+                        'prepay'        => (float)($o['prepay'] ?? 0),
+                        'bizcat'        => $o['bizcat']        ?? '',
+                        'deadline'      => $o['deadline']      ?? null,
+                        'comment'       => $o['comment']       ?? '',
+                        'files'         => is_array($o['files'] ?? null)
+                            ? json_encode($o['files'])
+                            : ($o['files'] ?? '[]'),
+                        'options'       => is_array($o['options'] ?? $o['checkedItems'] ?? null)
+                            ? json_encode($o['options'] ?? $o['checkedItems'])
+                            : '[]',
+                        'extra'         => '{}',
+                        'created_at'    => $o['date'] ?? $o['createdAt'] ?? date('Y-m-d H:i:s'),
+                    ]);
+                    $imported['orders']++;
+                }
+            }
+        }
+
+        if (!empty($body['finance']) && is_array($body['finance'])) {
+            foreach ($body['finance'] as $f) {
+                if (empty($f['id'])) continue;
+                if (!$db->selectOne('finance', ['id' => (string)$f['id']])) {
+                    $db->insert('finance', [
+                        'id'          => (string)$f['id'],
+                        'type'        => $f['type']        ?? 'income',
+                        'category'    => $f['category']    ?? '',
+                        'description' => $f['desc']        ?? $f['description'] ?? '',
+                        'amount'      => (float)($f['amount'] ?? 0),
+                        'method'      => $f['method']      ?? '',
+                        'client'      => $f['client']      ?? '',
+                        'date'        => $f['date']        ?? date('Y-m-d H:i:s'),
+                    ]);
+                    $imported['finance']++;
+                }
+            }
+        }
+
+        if (!empty($body['clients']) && is_array($body['clients'])) {
+            foreach ($body['clients'] as $c) {
+                if (empty($c['name'])) continue;
+                if (!$db->selectOne('clients', ['name' => $c['name']])) {
+                    $db->insert('clients', [
+                        'id'       => (string)($c['id'] ?? CQLite::uid('cli')),
+                        'name'     => $c['name'],
+                        'type'     => $c['type']     ?? '',
+                        'phone'    => $c['phone']    ?? '',
+                        'email'    => $c['email']    ?? '',
+                        'address'  => $c['address']  ?? '',
+                        'inn'      => $c['inn']       ?? '',
+                        'discount' => (float)($c['discount'] ?? 0),
+                        'notes'    => $c['notes']    ?? '',
+                    ]);
+                    $imported['clients']++;
+                }
+            }
+        }
+
+        if (!empty($body['settings']) && is_array($body['settings'])) {
+            $db->setSettings($body['settings']);
+        }
+    });
+
+    $log->action('IMPORT', "orders:{$imported['orders']} finance:{$imported['finance']} clients:{$imported['clients']}");
+    $res->ok(['imported' => $imported]);
+}
+
+// ════════════════════════════════════════════════════════════
+// HANDLERS — ЛОГ
+// ════════════════════════════════════════════════════════════
+function handleLog(array $params, CQLite $db, Response $res): void
+{
+    $limit = min(500, (int)($params['limit'] ?? 100));
+    $type  = $params['type'] ?? '';
+    $where = $type ? ['action LIKE' => $type . '%'] : [];
+    $rows  = $db->select('api_log', $where, ['order' => 'created_at DESC', 'limit' => $limit]);
+    $res->ok(['data' => $rows]);
+}
+
+// ════════════════════════════════════════════════════════════
+// GENERIC CRUD
+// ════════════════════════════════════════════════════════════
+function handleGenericCRUD(
+    string $table, string $method, array $body, array $params,
+    ?string $id, CQLite $db, Response $res, Logger $log,
+    array $allowedFields, array $defaults = []
+): void {
+    switch ($method) {
+
+        case 'GET':
+            if ($id) {
+                $row = $db->selectOne($table, ['id' => $id]);
+                if (!$row) { $res->notFound("{$table} {$id}"); return; }
+                $res->ok(['data' => $row]);
+                return;
+            }
+            $page   = max(1, (int)($params['page'] ?? 1));
+            $result = $db->paginate($table, [], $page, 100, ['order' => 'created_at DESC']);
+            $res->ok($result);
+            break;
+
+        case 'POST':
+            $row = $defaults;
+            foreach ($allowedFields as $field) {
+                if (array_key_exists($field, $body)) $row[$field] = $body[$field];
+            }
+            if (!isset($row['id'])) $row['id'] = CQLite::uid($table);
+            $newId      = $db->insert($table, $row);
+            $row['id']  = $row['id'] ?? $newId;
+            $log->action(strtoupper($table) . '_ADD', $row['id']);
+            $res->ok(['data' => $row, 'id' => $row['id']]);
+            break;
+
+        case 'PUT':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $update = [];
+            foreach ($allowedFields as $field) {
+                if (array_key_exists($field, $body)) $update[$field] = $body[$field];
+            }
+            if (!empty($update)) $db->update($table, $update, ['id' => $id]);
+            $res->ok(['data' => $db->selectOne($table, ['id' => $id])]);
+            break;
+
+        case 'DELETE':
+            if (!$id) { $res->badRequest('Нет ID'); return; }
+            $db->delete($table, ['id' => $id]);
+            $log->action(strtoupper($table) . '_DELETE', 'ID: ' . $id);
+            $res->ok(['deleted' => $id]);
+            break;
+
+        default:
+            $res->methodNotAllowed();
+    }
+}
